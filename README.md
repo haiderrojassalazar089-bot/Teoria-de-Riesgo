@@ -2,7 +2,7 @@
 
 ## Tablero Interactivo de Análisis de Riesgo Financiero
 
-**Universidad Santo Tomás · Bogotá · Facultad de Economía**  
+**Universidad Santo Tomás · Bogotá · Facultad de Estadística**  
 **Curso:** Teoría del Riesgo Financiero  
 **Profesor:** Javier Mauricio Sierra  
 **Proyecto Integrador:** Dashboard de Riesgo con datos en tiempo real  
