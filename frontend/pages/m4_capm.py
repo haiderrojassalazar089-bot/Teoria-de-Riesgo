@@ -12,8 +12,8 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.loader import (get_prices, get_returns, get_risk_free_rate,
-                          TICKERS, BENCHMARK, TICKER_COLORS, SECTOR_MAP)
+from data.client import get_capm, get_precios, TICKERS, TICKER_COLORS, SECTOR_MAP
+BENCHMARK = '^GSPC'
 from utils.theme import plotly_base, COLORS
 
 
@@ -242,9 +242,19 @@ def show():
     """, unsafe_allow_html=True)
 
     with st.spinner("Cargando datos y tasa libre de riesgo..."):
-        prices  = get_prices(years=3)
-        log_ret = get_returns(prices, log=True)
-        rf      = get_risk_free_rate()
+        import pandas as pd, numpy as np
+        capm_data = get_capm(years=3)
+        rf = {"display": capm_data["rf_display"], "annual": capm_data["rf_annual"],
+              "daily": capm_data["rf_annual"]/252, "source": capm_data["rf_source"],
+              "date": capm_data["rf_date"]}
+        all_log = {}
+        for t in TICKERS + [BENCHMARK]:
+            d = get_precios(t, years=3)
+            idx = pd.to_datetime([p["fecha"] for p in d["precios"]])
+            closes = [p["close"] for p in d["precios"]]
+            s = pd.Series(closes, index=idx)
+            all_log[t] = np.log(s/s.shift(1)).dropna()
+        log_ret = pd.DataFrame(all_log).dropna()
 
     ret_mkt  = log_ret[BENCHMARK]
     rm_daily = ret_mkt.mean()

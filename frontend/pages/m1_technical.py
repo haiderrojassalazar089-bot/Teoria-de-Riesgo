@@ -10,7 +10,7 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.loader import get_ohlcv, TICKERS, TICKER_COLORS
+from data.client import get_indicadores, get_precios, TICKERS, TICKER_COLORS
 from utils.theme import plotly_base, COLORS
 
 
@@ -191,7 +191,13 @@ def show():
 
     # Cargar datos
     with st.spinner(f"Cargando {ticker}..."):
-        df = get_ohlcv(ticker, years=years_map[years])
+        data = get_precios(ticker, years=years_map[years])
+        import pandas as pd
+        df = pd.DataFrame(data["precios"])
+        df["fecha"] = pd.to_datetime(df["fecha"])
+        df = df.set_index("fecha")
+        df.columns = [c.capitalize() for c in df.columns]
+        df.index.name = "Date" 
 
     if df.empty:
         st.error("No se pudieron cargar los datos. Intenta nuevamente.")

@@ -12,7 +12,7 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.loader import get_prices, get_returns, get_risk_free_rate, TICKERS, TICKER_COLORS, SECTOR_MAP
+from data.client import get_rendimientos, post_frontera, get_macro, TICKERS, TICKER_COLORS, SECTOR_MAP
 from utils.theme import plotly_base, COLORS
 
 
@@ -269,9 +269,17 @@ def show():
     """, unsafe_allow_html=True)
 
     with st.spinner("Cargando datos y optimizando portafolio..."):
-        prices  = get_prices(years=3)
-        log_ret = get_returns(prices[TICKERS], log=True)
-        rf      = get_risk_free_rate()
+        import pandas as pd, numpy as np
+        all_log = {}
+        for t in TICKERS:
+            d = get_rendimientos(t, years=3)
+            idx = pd.to_datetime(d["fechas"])
+            all_log[t] = pd.Series(d["log_returns"], index=idx)
+        log_ret = pd.DataFrame(all_log).dropna()
+        macro = get_macro()
+        rf = {"annual": macro["tasa_libre_riesgo"]["valor"],
+              "daily": macro["tasa_libre_riesgo"]["valor"]/252,
+              "display": macro["tasa_libre_riesgo"]["display"]}
 
     mu_daily  = log_ret[TICKERS].mean().values
     cov_daily = log_ret[TICKERS].cov().values

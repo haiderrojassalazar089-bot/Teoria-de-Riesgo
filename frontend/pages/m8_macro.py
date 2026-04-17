@@ -14,8 +14,9 @@ import requests
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.loader import (get_prices, get_returns, get_risk_free_rate,
-                          TICKERS, BENCHMARK, TICKER_COLORS, SECTOR_MAP)
+from data.client import (get_rendimientos, get_precios, get_macro, get_capm,
+                          TICKERS, TICKER_COLORS, SECTOR_MAP)
+BENCHMARK = "^GSPC" 
 from utils.theme import plotly_base, COLORS
 
 
@@ -193,10 +194,10 @@ def compute_optimal_weights(log_ret, rf_daily):
 
 # ── Gráficos ──────────────────────────────────────────────────
 
-def fig_acumulado(prices, w_port, bench_col, port_label):
-    port_norm  = (prices[TICKERS] * w_port).sum(axis=1)
+def fig_acumulado(prices_df, w_port, bench_col, port_label):
+    port_norm  = (prices_df[TICKERS] * w_port).sum(axis=1)
     port_norm  = port_norm / port_norm.iloc[0] * 100
-    bench_norm = prices[bench_col] / prices[bench_col].iloc[0] * 100
+    bench_norm = prices_df[bench_col] / prices_df[bench_col].iloc[0] * 100
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -273,9 +274,21 @@ def show():
     """, unsafe_allow_html=True)
 
     with st.spinner("Cargando datos de mercado y macro..."):
-        prices  = get_prices(years=3)
-        log_ret = get_returns(prices, log=True)
-        rf      = get_risk_free_rate()
+        import pandas as pd, numpy as np
+        all_log = {}
+        for t in TICKERS + [BENCHMARK]:
+            d = get_precios(t, years=3)
+            idx = pd.to_datetime([p["fecha"] for p in d["precios"]])
+            closes = [p["close"] for p in d["precios"]]
+            s = pd.Series(closes, index=idx)
+            all_log[t] = s
+        prices_df = pd.DataFrame(all_log).dropna()
+        log_ret = np.log(prices_df / prices_df.shift(1)).dropna()
+        macro_d = get_macro()
+        rf = {"annual": macro_d["tasa_libre_riesgo"]["valor"],
+              "daily": macro_d["tasa_libre_riesgo"]["valor"]/252,
+              "display": macro_d["tasa_libre_riesgo"]["display"],
+              "source": macro_d["tasa_libre_riesgo"]["fuente"]}
 
     # Opciones de portafolio
     c1, c2 = st.columns([2, 1])
@@ -331,7 +344,7 @@ def show():
 
     # ── Rendimiento acumulado ──
     sec_title("② Rendimiento Acumulado — Portafolio vs S&P 500 (Base 100)", COLORS["sky"])
-    st.plotly_chart(fig_acumulado(prices, w_port, BENCHMARK, port_label),
+    st.plotly_chart(fig_acumulado(prices_df, w_port, BENCHMARK, port_label),
                     use_container_width=True)
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)

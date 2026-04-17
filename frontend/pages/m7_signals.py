@@ -12,7 +12,7 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.loader import get_ohlcv, TICKERS, TICKER_COLORS, SECTOR_MAP
+from data.client import get_alertas, get_indicadores, TICKERS, TICKER_COLORS, SECTOR_MAP
 from utils.theme import plotly_base, COLORS
 
 
@@ -322,7 +322,12 @@ def show():
     with st.spinner("Cargando datos de todos los activos..."):
         data_all = {}
         for t in TICKERS:
-            df_t = get_ohlcv(t, years=1)
+            ind_data = get_indicadores(t, years=1)
+            import pandas as pd
+            df_t = pd.DataFrame({"Close": ind_data["close"],
+                                  "High": ind_data["close"],
+                                  "Low": ind_data["close"]},
+                                 index=pd.to_datetime(ind_data["fechas"]))
             if not df_t.empty:
                 data_all[t] = df_t
 

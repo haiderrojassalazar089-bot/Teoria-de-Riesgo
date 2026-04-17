@@ -13,7 +13,7 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.loader import get_prices, get_returns, TICKERS, TICKER_COLORS
+from data.client import get_rendimientos, post_var, TICKERS, TICKER_COLORS
 from utils.theme import plotly_base, COLORS
 
 
@@ -205,8 +205,13 @@ def show():
     """, unsafe_allow_html=True)
 
     with st.spinner("Cargando datos..."):
-        prices  = get_prices(years=3)
-        log_ret = get_returns(prices[TICKERS], log=True)
+        import pandas as pd, numpy as np
+        all_log = {}
+        for t in TICKERS:
+            d = get_rendimientos(t, years=3)
+            idx = pd.to_datetime(d["fechas"])
+            all_log[t] = pd.Series(d["log_returns"], index=idx)
+        log_ret = pd.DataFrame(all_log).dropna()
 
     # Controles
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])

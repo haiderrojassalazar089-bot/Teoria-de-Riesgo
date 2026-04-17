@@ -1,1 +1,52 @@
+# Variables de entorno — NUNCA subir al repositorio
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Entornos virtuales
 .venv/
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Datos temporales
+*.csv
+*.xlsx
+*.parquet
+*.db
+*.sqlite
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Distribución Python
+dist/
+build/
+*.egg-info/
+
+# Cache
+.cache/
+*.cache
