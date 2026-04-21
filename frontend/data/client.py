@@ -11,7 +11,7 @@ import streamlit as st
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8002")
+BACKEND_URL = os.environ.get("BACKEND_URL", "https://risklab-backend.onrender.com")
 
 
 def _tickers_activos() -> list[str]:
