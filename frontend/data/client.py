@@ -1,3 +1,4 @@
+import os
 """
 frontend/data/client.py
 Cliente HTTP para consumir el backend FastAPI.
@@ -10,7 +11,7 @@ import streamlit as st
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-BACKEND_URL = "http://localhost:8002"
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8002")
 
 
 def _tickers_activos() -> list[str]:
