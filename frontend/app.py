@@ -68,7 +68,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # Opciones del sidebar
+    # Opciones del sidebar — sin separador
     opciones_nav = ["◈ Selector de Activos"]
 
     if confirmado and len(tickers_activos) >= 2:
@@ -82,7 +82,6 @@ with st.sidebar:
             "M6 · Markowitz",
             "M7 · Señales & Alertas",
             "M8 · Macro & Benchmark",
-            "── Módulos Avanzados ──",
             "M9 · Monte Carlo Visual",
             "M10 · Duelo de Portafolios",
             "M11 · Máquina del Tiempo",
@@ -93,11 +92,6 @@ with st.sidebar:
         options=opciones_nav,
         label_visibility="collapsed",
     )
-
-    # Evitar selección del separador
-    if modulo == "── Módulos Avanzados ──":
-        st.warning("Selecciona un módulo avanzado 👇")
-        st.stop()
 
     # Botón cambiar portafolio
     if confirmado:

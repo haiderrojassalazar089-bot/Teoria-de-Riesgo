@@ -1,12 +1,12 @@
 """
-backend/app/main_nuevos_endpoints.py
+backend/app/nuevos_endpoints.py
 NUEVOS ENDPOINTS para tickers dinámicos del S&P 500.
-Agrega estos endpoints al main.py existente.
 """
 from __future__ import annotations
 import logging
 import numpy as np
 import pandas as pd
+import yfinance as yf
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,18 +35,35 @@ def _safe_float(v) -> float:
     except Exception:
         return 0.0
 
-# ── Pega estos endpoints en tu main.py existente ─────────────
+
+def _download_closes(tickers: list[str], years: int = 3) -> pd.DataFrame:
+    """
+    Descarga precios de cierre manejando MultiIndex de yfinance correctamente.
+    """
+    start = (datetime.today() - timedelta(days=365 * years)).strftime("%Y-%m-%d")
+    raw = yf.download(tickers, start=start, auto_adjust=True,
+                      progress=False, multi_level_index=False)
+    if isinstance(raw.columns, pd.MultiIndex):
+        prices = raw["Close"]
+    else:
+        # Si solo hay un ticker, yfinance devuelve columnas planas
+        if len(tickers) == 1:
+            prices = raw[["Close"]].copy()
+            prices.columns = tickers
+        else:
+            # Filtrar solo columnas de cierre
+            close_cols = [c for c in raw.columns if str(c) in tickers]
+            prices = raw[close_cols] if close_cols else raw
+    prices.columns.name = None
+    prices = prices.dropna(how="all").ffill().dropna()
+    return prices
 
 
-# GET /sp500/tickers — lista completa del S&P 500
+# GET /sp500/tickers
 async def get_sp500_list(
-    sector: str = Query(default=None, description="Filtrar por sector GICS"),
-    search: str = Query(default=None, description="Buscar por ticker o nombre"),
+    sector: str = Query(default=None),
+    search: str = Query(default=None),
 ) -> SP500ListResponse:
-    """
-    Retorna la lista completa de tickers del S&P 500 con nombre y sector.
-    Permite filtrar por sector o buscar por texto.
-    """
     infos = get_sp500_info()
     if sector:
         infos = [i for i in infos if sector.lower() in i["sector"].lower()]
@@ -59,31 +76,29 @@ async def get_sp500_list(
     )
 
 
-# POST /montecarlo — simulación de trayectorias
+# POST /montecarlo
 async def post_montecarlo(
     body: MonteCarloRequest,
     data: DataService = Depends(get_data_service),
 ) -> MonteCarloResponse:
-    """
-    Simula N trayectorias del portafolio para el horizonte indicado.
-    Retorna percentiles 5, 50, 95 y probabilidad de pérdida.
-    """
     try:
-        prices = data.get_multi_close(body.tickers, years=body.years_history)
-        prices = prices[body.tickers]
+        prices  = _download_closes(body.tickers, years=body.years_history)
+        # Asegurar que solo están los tickers pedidos
+        avail   = [t for t in body.tickers if t in prices.columns]
+        prices  = prices[avail]
         log_ret = np.log(prices / prices.shift(1)).dropna()
-        w = np.array(body.weights)
-        port_r = log_ret.values @ w
-        mu = port_r.mean()
-        sigma = port_r.std()
-        cov = log_ret.cov().values
+        w       = np.array(body.weights[:len(avail)])
+        w       = w / w.sum()  # renormalizar por si acaso
+        port_r  = log_ret.values @ w
+        mu      = port_r.mean()
+        sigma   = port_r.std()
+        cov     = log_ret.cov().values
 
         np.random.seed(42)
-        H = body.horizon_days
-        N = body.n_simulations
-        n_assets = len(body.tickers)
+        H        = body.horizon_days
+        N        = body.n_simulations
+        n_assets = len(avail)
 
-        # Cholesky para correlaciones
         try:
             L = np.linalg.cholesky(cov * 252 / 252)
         except np.linalg.LinAlgError:
@@ -92,12 +107,11 @@ async def post_montecarlo(
         trayectorias = []
         for _ in range(N):
             if L is not None:
-                z = np.random.standard_normal((H, n_assets))
-                r_sim = (log_ret.mean().values + (z @ L.T))
+                z       = np.random.standard_normal((H, n_assets))
+                r_sim   = log_ret.mean().values + (z @ L.T)
                 port_sim = r_sim @ w
             else:
                 port_sim = np.random.normal(mu, sigma, H)
-            # Valor acumulado base 100
             tray = 100 * np.cumprod(1 + port_sim)
             trayectorias.append(tray.tolist())
 
@@ -106,11 +120,10 @@ async def post_montecarlo(
         p50 = np.percentile(arr, 50, axis=0).tolist()
         p95 = np.percentile(arr, 95, axis=0).tolist()
 
-        # Fechas simuladas (días hábiles desde hoy)
-        hoy = datetime.today()
+        hoy    = datetime.today()
         fechas = []
-        d = hoy
-        count = 0
+        d      = hoy
+        count  = 0
         while count < H:
             d += timedelta(days=1)
             if d.weekday() < 5:
@@ -119,10 +132,9 @@ async def post_montecarlo(
 
         prob_perdida = float((arr[:, -1] < 100).mean())
         retorno_esp  = float(arr[:, -1].mean() / 100 - 1)
-        var_h = float(-np.percentile(arr[:, -1] / 100 - 1, 5))
+        var_h        = float(-np.percentile(arr[:, -1] / 100 - 1, 5))
 
-        # Downsample trayectorias para no enviar demasiados datos
-        step = max(1, N // 200)
+        step       = max(1, N // 200)
         tray_sample = [trayectorias[i] for i in range(0, N, step)]
 
         return MonteCarloResponse(
@@ -145,36 +157,44 @@ async def post_montecarlo(
         raise HTTPException(status_code=400, detail=f"Error Monte Carlo: {e}")
 
 
-# POST /duelo — enfrentar dos portafolios
+# POST /duelo
 async def post_duelo(
     body: DueloRequest,
     data: DataService = Depends(get_data_service),
 ) -> DueloResponse:
-    """
-    Enfrenta dos portafolios en Sharpe, VaR, Beta, Alpha y Drawdown.
-    Retorna veredicto, puntos y resumen narrativo.
-    """
     try:
-        all_tickers = list(set(body.portafolio_a.tickers + body.portafolio_b.tickers + ["^GSPC"]))
-        prices = data.get_multi_close(all_tickers, years=body.years)
+        all_tickers = list(set(
+            body.portafolio_a.tickers + body.portafolio_b.tickers + ["^GSPC"]
+        ))
+        prices  = _download_closes(all_tickers, years=body.years)
         log_ret = np.log(prices / prices.shift(1)).dropna()
-        rf_data = data.get_rf()
+
+        rf_data  = data.get_rf()
         rf_daily = rf_data["daily"]
-        bench = log_ret["^GSPC"] if "^GSPC" in log_ret.columns else log_ret.iloc[:, 0]
+        bench    = log_ret["^GSPC"] if "^GSPC" in log_ret.columns else log_ret.iloc[:, 0]
 
         def calc_metrics(req, name):
-            w = np.array(req.weights)
-            t = req.tickers
+            w     = np.array(req.weights)
+            t     = req.tickers
             avail = [x for x in t if x in log_ret.columns]
-            r = log_ret[avail].values @ w[:len(avail)]
+            if not avail:
+                raise ValueError(f"Ningún ticker de {name} tiene datos disponibles: {t}")
+            w_use = w[:len(avail)]
+            w_use = w_use / w_use.sum()
+            r     = log_ret[avail].values @ w_use
+
             ann_ret = float(r.mean() * 252)
-            vol = float(r.std() * np.sqrt(252))
-            sharpe = (ann_ret - rf_daily * 252) / vol if vol > 0 else 0
-            cum = (1 + pd.Series(r)).cumprod()
-            dd = float((cum / cum.cummax() - 1).min())
-            var95 = float(-np.percentile(r, 5))
-            aligned = pd.concat([pd.Series(r), bench], axis=1).dropna()
-            slope, intercept, *_ = stats.linregress(aligned.iloc[:, 1], aligned.iloc[:, 0])
+            vol     = float(r.std() * np.sqrt(252))
+            sharpe  = (ann_ret - rf_daily * 252) / vol if vol > 0 else 0
+            cum     = (1 + pd.Series(r)).cumprod()
+            dd      = float((cum / cum.cummax() - 1).min())
+            var95   = float(-np.percentile(r, 5))
+
+            r_series = pd.Series(r, index=log_ret.index[:len(r)])
+            aligned  = pd.concat([r_series, bench], axis=1).dropna()
+            slope, intercept, *_ = stats.linregress(
+                aligned.iloc[:, 1], aligned.iloc[:, 0]
+            )
             return DueloMetricas(
                 nombre=name, tickers=t, weights=list(w),
                 retorno_anual=round(ann_ret, 4),
@@ -190,14 +210,13 @@ async def post_duelo(
         a = calc_metrics(body.portafolio_a, "Portafolio A")
         b = calc_metrics(body.portafolio_b, "Portafolio B")
 
-        # Determinar ganador por métrica
         comparaciones = {
-            "Retorno anual":  (a.retorno_anual,  b.retorno_anual,  True),
-            "Sharpe":         (a.sharpe,          b.sharpe,          True),
-            "Volatilidad":    (a.volatilidad,     b.volatilidad,     False),
-            "Max Drawdown":   (a.max_drawdown,    b.max_drawdown,    False),
-            "VaR 95%":        (a.var_95,           b.var_95,           False),
-            "Alpha":          (a.alpha,            b.alpha,            True),
+            "Retorno anual": (a.retorno_anual, b.retorno_anual, True),
+            "Sharpe":        (a.sharpe,         b.sharpe,         True),
+            "Volatilidad":   (a.volatilidad,    b.volatilidad,    False),
+            "Max Drawdown":  (a.max_drawdown,   b.max_drawdown,   False),
+            "VaR 95%":       (a.var_95,          b.var_95,          False),
+            "Alpha":         (a.alpha,           b.alpha,           True),
         }
         puntos_a = puntos_b = 0
         gan_a, gan_b = {}, {}
@@ -236,17 +255,12 @@ async def post_duelo(
         raise HTTPException(status_code=400, detail=f"Error duelo: {e}")
 
 
-# POST /maquina-tiempo — portafolio en un período histórico
+# POST /maquina-tiempo
 async def post_maquina_tiempo(
     body: DynamicAnalysisRequest,
     data: DataService = Depends(get_data_service),
 ) -> MaquinaTiempoResponse:
-    """
-    Reconstruye el comportamiento del portafolio en un rango de fechas histórico.
-    Máx. 10 años hacia atrás.
-    """
     try:
-        import yfinance as yf
         all_t = body.tickers + ["^GSPC"]
         start = body.start_date or (datetime.today() - timedelta(days=365 * body.years)).strftime("%Y-%m-%d")
         end   = body.end_date   or datetime.today().strftime("%Y-%m-%d")
@@ -257,16 +271,17 @@ async def post_maquina_tiempo(
             prices = raw["Close"]
         else:
             prices = raw
+        prices.columns.name = None
         prices = prices.dropna(how="all").ffill().dropna()
 
         if prices.empty:
             raise HTTPException(status_code=404, detail="Sin datos para el período solicitado.")
 
         fechas = [d.strftime("%Y-%m-%d") for d in prices.index]
-        norm = prices / prices.iloc[0] * 100
+        norm   = prices / prices.iloc[0] * 100
 
         retornos_norm = {}
-        estadisticas = {}
+        estadisticas  = {}
         for t in body.tickers:
             if t not in norm.columns:
                 continue
@@ -275,14 +290,14 @@ async def post_maquina_tiempo(
             log_r = np.log(prices[t] / prices[t].shift(1)).dropna()
             jb_s, jb_p = stats.jarque_bera(log_r.values)
             estadisticas[t] = {
-                "retorno_total":   round(float(prices[t].iloc[-1] / prices[t].iloc[0] - 1), 4),
-                "volatilidad":     round(float(log_r.std() * np.sqrt(252)), 4),
-                "max_drawdown":    round(float(((norm[t] / norm[t].cummax()) - 1).min()), 4),
-                "sharpe_aprox":    round(float(log_r.mean() * 252 / (log_r.std() * np.sqrt(252))), 4),
-                "jarque_bera_p":   round(float(jb_p), 4),
+                "retorno_total": round(float(prices[t].iloc[-1] / prices[t].iloc[0] - 1), 4),
+                "volatilidad":   round(float(log_r.std() * np.sqrt(252)), 4),
+                "max_drawdown":  round(float(((norm[t] / norm[t].cummax()) - 1).min()), 4),
+                "sharpe_aprox":  round(float(log_r.mean() * 252 / (log_r.std() * np.sqrt(252))), 4),
+                "jarque_bera_p": round(float(jb_p), 4),
             }
 
-        bench_norm = [round(float(v), 4) for v in norm["^GSPC"].dropna()] if "^GSPC" in norm.columns else []
+        bench_norm      = [round(float(v), 4) for v in norm["^GSPC"].dropna()] if "^GSPC" in norm.columns else []
         retornos_totales = {t: estadisticas[t]["retorno_total"] for t in estadisticas}
         mejor = max(retornos_totales, key=retornos_totales.get) if retornos_totales else ""
         peor  = min(retornos_totales, key=retornos_totales.get) if retornos_totales else ""
