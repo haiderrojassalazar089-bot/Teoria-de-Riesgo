@@ -18,12 +18,18 @@ from data.client import get_rendimientos
 from utils.theme import plotly_base, COLORS
 from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
-# ── Configuraciones de modelos ────────────────────────────────
 MODELS = {
     "ARCH(1)"          : dict(vol="ARCH",  p=1, q=0, o=0),
     "GARCH(1,1)"       : dict(vol="GARCH", p=1, q=1, o=0),
     "GJR-GARCH(1,1,1)" : dict(vol="GARCH", p=1, q=1, o=1),
     "EGARCH(1,1)"      : dict(vol="EGARCH",p=1, q=1, o=0),
+}
+
+MODEL_COLORS = {
+    "ARCH(1)"          : COLORS["sky"],
+    "GARCH(1,1)"       : COLORS["gold"],
+    "GJR-GARCH(1,1,1)" : COLORS["emerald"],
+    "EGARCH(1,1)"      : COLORS["violet"],
 }
 
 def sec_title(text, color=None):
@@ -76,8 +82,8 @@ def fig_residuals(res):
     fig.add_trace(go.Bar(x=std_r.index, y=std_r.values,
         marker_color=colors, marker_line_width=0, opacity=0.85, name="εₜ/σₜ"),
         row=1, col=1)
-    fig.add_hline(y=2,  line=dict(color=COLORS["rose"],    width=1, dash="dash"), row=1, col=1)
-    fig.add_hline(y=-2, line=dict(color=COLORS["rose"],    width=1, dash="dash"), row=1, col=1)
+    fig.add_hline(y=2,  line=dict(color=COLORS["rose"], width=1, dash="dash"), row=1, col=1)
+    fig.add_hline(y=-2, line=dict(color=COLORS["rose"], width=1, dash="dash"), row=1, col=1)
     fig.add_trace(go.Scatter(x=osm, y=osr, mode="markers", name="Cuantiles",
         marker=dict(color=COLORS["gold"], size=3.5, opacity=0.55)), row=1, col=2)
     fig.add_trace(go.Scatter(x=osm, y=line_y, mode="lines", name="Normal",
@@ -124,17 +130,64 @@ def fig_forecast(res, horizon, ticker):
         xaxis_title="Días hacia adelante", yaxis_title="σ (%)")
     return fig
 
-def render_model_card(col, name, res, is_best):
-    with col:
-        badge = " ★ Mejor AIC" if is_best else ""
-        st.markdown(f"**{name}**{badge}")
-        if res is None:
-            st.caption("No convergió")
-            return
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Log-L", f"{res.loglikelihood:.2f}")
-        c2.metric("AIC",   f"{res.aic:.2f}")
-        c3.metric("BIC",   f"{res.bic:.2f}")
+
+def render_model_cards(results, best_k):
+    """Renderiza una tarjeta por modelo con KPIs bien espaciados."""
+    cols = st.columns(4)
+    for i, (name, res) in enumerate(results.items()):
+        color = MODEL_COLORS.get(name, COLORS["gold"])
+        is_best = name == best_k
+        with cols[i]:
+            if res is None:
+                st.markdown(f"""
+                <div style="background:#FFFFFF;border:1px solid #D8DDE8;
+                border-top:3px solid {color};border-radius:8px;padding:1.2rem;
+                opacity:0.5;min-height:160px">
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:.62rem;
+                    font-weight:700;color:{color};margin-bottom:.8rem">{name}</div>
+                    <div style="font-size:.75rem;color:#8896A8">No convergió</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                best_badge = """<span style="background:#1A6B4A22;color:#1A6B4A;
+                    border:1px solid #1A6B4A44;border-radius:3px;
+                    font-size:.48rem;padding:1px 6px;margin-left:6px;
+                    letter-spacing:.06em">★ MEJOR AIC</span>""" if is_best else ""
+
+                st.markdown(f"""
+                <div style="background:#FFFFFF;border:1px solid #D8DDE8;
+                border-top:3px solid {color};border-radius:8px;padding:1.2rem;
+                min-height:160px">
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:.62rem;
+                    font-weight:700;color:{color};margin-bottom:.8rem;
+                    display:flex;align-items:center">
+                        {name}{best_badge}
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr;gap:.5rem">
+                        <div style="background:#F4F6FB;border-radius:5px;padding:.5rem .7rem">
+                            <div style="font-family:'IBM Plex Mono',monospace;font-size:.48rem;
+                            color:#8896A8;letter-spacing:.1em;text-transform:uppercase">Log-Likelihood</div>
+                            <div style="font-family:'Playfair Display',serif;font-size:1rem;
+                            font-weight:700;color:#1A2035">{res.loglikelihood:.2f}</div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem">
+                            <div style="background:#F4F6FB;border-radius:5px;padding:.5rem .7rem">
+                                <div style="font-family:'IBM Plex Mono',monospace;font-size:.48rem;
+                                color:#8896A8;letter-spacing:.1em;text-transform:uppercase">AIC</div>
+                                <div style="font-family:'Playfair Display',serif;font-size:.95rem;
+                                font-weight:700;color:{'#1A6B4A' if is_best else '#1A2035'}">{res.aic:.2f}</div>
+                            </div>
+                            <div style="background:#F4F6FB;border-radius:5px;padding:.5rem .7rem">
+                                <div style="font-family:'IBM Plex Mono',monospace;font-size:.48rem;
+                                color:#8896A8;letter-spacing:.1em;text-transform:uppercase">BIC</div>
+                                <div style="font-family:'Playfair Display',serif;font-size:.95rem;
+                                font-weight:700;color:#1A2035">{res.bic:.2f}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
 
 def show():
     render_portafolio_badge()
@@ -161,7 +214,6 @@ def show():
     """, unsafe_allow_html=True)
 
     with st.spinner("Cargando datos..."):
-        import pandas as pd
         all_log = {}
         for t in TICKERS:
             d = get_rendimientos(t, years=3)
@@ -179,7 +231,7 @@ def show():
 
     returns_pct = log_ret[ticker] * 100
 
-    # ── 1. Justificación — Test ARCH-LM ──
+    # ── 1. Test ARCH-LM ──
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
     sec_title("① Justificación — Prueba de Efecto ARCH (ARCH-LM)")
 
@@ -187,37 +239,50 @@ def show():
         lm_stat, lm_p, _, _ = het_arch(returns_pct.values, nlags=5)
         detected = lm_p < 0.05
         color_lm = COLORS["rose"] if detected else COLORS["emerald"]
-        st.markdown(f"""
-        <div style="background:#FFFFFF;border:1px solid {color_lm}44;
-                    border-left:3px solid {color_lm};border-radius:6px;padding:1rem 1.2rem;
-                    display:flex;align-items:center;gap:2rem;flex-wrap:wrap;">
-            <div>
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:0.55rem;
-                            color:#8896A8;letter-spacing:0.12em;text-transform:uppercase;">
-                    ARCH-LM (5 rezagos)</div>
-                <div style="font-family:'Playfair Display',serif;font-size:1.1rem;
-                            font-weight:600;color:#1A2035;margin-top:2px;">
-                    stat = {lm_stat:.4f} &nbsp;·&nbsp; p = {lm_p:.4f}</div>
+
+        col_lm1, col_lm2, col_lm3 = st.columns([1, 1, 2])
+        with col_lm1:
+            st.markdown(f"""
+            <div style="background:#FFFFFF;border:1px solid #D8DDE8;
+            border-top:3px solid {color_lm};border-radius:8px;padding:1.1rem">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.52rem;
+                color:#8896A8;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.4rem">
+                Estadístico LM</div>
+                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                font-weight:700;color:#1A2035">{lm_stat:.4f}</div>
             </div>
-            <div style="font-family:'Inter',sans-serif;font-size:0.82rem;
-                        font-weight:600;color:{color_lm};">
-                {'⚠️ Efecto ARCH detectado → justifica modelo GARCH'
-                  if detected else '✅ No se detecta efecto ARCH'}
+            """, unsafe_allow_html=True)
+        with col_lm2:
+            st.markdown(f"""
+            <div style="background:#FFFFFF;border:1px solid #D8DDE8;
+            border-top:3px solid {color_lm};border-radius:8px;padding:1.1rem">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.52rem;
+                color:#8896A8;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.4rem">
+                p-valor</div>
+                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                font-weight:700;color:{color_lm}">{lm_p:.4f}</div>
             </div>
-            <div style="font-family:'Inter',sans-serif;font-size:0.78rem;
-                        color:#4A5568;flex:1;min-width:200px;">
+            """, unsafe_allow_html=True)
+        with col_lm3:
+            st.markdown(f"""
+            <div style="background:{'#FAF4F4' if detected else '#F4FAF6'};
+            border:1px solid {color_lm}44;border-left:3px solid {color_lm};
+            border-radius:8px;padding:1.1rem;height:100%">
+                <div style="font-size:.82rem;font-weight:600;color:{color_lm};margin-bottom:.3rem">
+                {'⚠️ Efecto ARCH detectado → justifica modelo GARCH' if detected else '✅ No se detecta efecto ARCH'}
+                </div>
+                <div style="font-size:.75rem;color:#4A5568;line-height:1.5">
                 H₀: no hay heterocedasticidad condicional.
-                {'Rechazamos H₀ → la varianza no es constante → GARCH requerido.'
-                  if detected else 'No rechazamos H₀ a α=5%.'}
+                {'Rechazamos H₀ — la varianza no es constante.' if detected else 'No rechazamos H₀ a α=5%.'}
+                </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
     except Exception:
         st.warning("No se pudo calcular la prueba ARCH-LM.")
 
-    st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
 
-    # ── 2. Ajuste de modelos ──
+    # ── 2. Comparación de modelos ──
     sec_title("② Ajuste de Modelos — Comparación de Especificaciones", COLORS["sky"])
 
     with st.spinner("Ajustando modelos ARCH/GARCH..."):
@@ -226,12 +291,10 @@ def show():
             results[name] = fit_model(returns_pct, cfg["vol"], cfg["p"],
                                       cfg["q"], cfg["o"], dist)
 
-    valid   = {k: v for k, v in results.items() if v is not None}
-    best_k  = min(valid, key=lambda k: valid[k].aic) if valid else None
+    valid  = {k: v for k, v in results.items() if v is not None}
+    best_k = min(valid, key=lambda k: valid[k].aic) if valid else None
 
-    cols = st.columns(4)
-    for i, (name, res) in enumerate(results.items()):
-        render_model_card(cols[i], name, res, name == best_k)
+    render_model_cards(results, best_k)
 
     with st.expander("Criterios de selección — AIC / BIC / Log-Likelihood"):
         st.markdown("""
@@ -239,15 +302,14 @@ def show():
         **BIC** (Bayesian): −2·ℓ + k·ln(n). Penaliza más severamente.
         **Log-Likelihood**: mayor es mejor. Mide ajuste al dato.
 
-        El **GJR-GARCH** captura el efecto apalancamiento mediante el parámetro γ:
-        impactos negativos generan mayor volatilidad que positivos de igual magnitud.
+        El **GJR-GARCH** captura el efecto apalancamiento mediante el parámetro γ.
         El **EGARCH** modela ln(σ²), garantizando varianza positiva sin restricciones.
         """)
 
     sel_name = st.selectbox("Modelo para diagnóstico y pronóstico",
                             list(valid.keys()) if valid else ["—"],
                             index=list(valid.keys()).index(best_k) if best_k in valid else 0)
-    sel_res  = valid.get(sel_name)
+    sel_res = valid.get(sel_name)
 
     if sel_res is None:
         st.error("No se pudo ajustar ningún modelo.")
@@ -264,7 +326,7 @@ def show():
     st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
     sec_title("Parámetros Estimados", COLORS["violet"])
 
-    params = sel_res.params
+    params  = sel_res.params
     persist = sum(v for k, v in params.items()
                   if k.startswith("alpha") or k.startswith("beta"))
 
@@ -285,7 +347,7 @@ def show():
 
     std_r = sel_res.std_resid.dropna()
     jb_s, jb_p = stats.jarque_bera(std_r.values)
-    rechaza = jb_p < 0.05
+    rechaza  = jb_p < 0.05
     color_jb = COLORS["rose"] if rechaza else COLORS["emerald"]
 
     st.markdown(f"""
@@ -295,12 +357,11 @@ def show():
         <span style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:#8896A8;">
             Jarque-Bera sobre residuos: &nbsp;
         </span>
-        <span style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:#1A2035;
-                     font-weight:500;">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+                     color:#1A2035;font-weight:500;">
             stat={jb_s:.2f} &nbsp; p={jb_p:.4f}
         </span>
-        <span style="font-family:'Inter',sans-serif;font-size:0.78rem;font-weight:600;
-                     color:{color_jb};margin-left:1rem;">
+        <span style="font-size:0.78rem;font-weight:600;color:{color_jb};margin-left:1rem;">
             {'→ Residuos no normales — considerar distribución t-Student'
               if rechaza else '→ Residuos aproximadamente normales'}
         </span>
@@ -310,25 +371,18 @@ def show():
     with st.expander("Interpretación — Diagnóstico de residuos"):
         st.markdown("""
         Los **residuos estandarizados** εₜ/σₜ deben comportarse como ruido blanco con
-        varianza unitaria si el modelo es correcto. Residuos fuera de ±2 son potenciales
-        outliers. El Q-Q plot evalúa si siguen la distribución supuesta.
-
-        Si Jarque-Bera rechaza normalidad en los residuos, es recomendable
-        re-estimar con distribución **t-Student** o **t asimétrica** para capturar
-        las colas pesadas residuales.
+        varianza unitaria si el modelo es correcto. Si Jarque-Bera rechaza normalidad,
+        re-estima con distribución **t-Student** o **t asimétrica**.
         """)
 
-    # ── 5. Pronóstico de volatilidad ──
+    # ── 5. Pronóstico ──
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
     sec_title(f"⑤ Pronóstico de Volatilidad — {horizon} Pasos", COLORS["emerald"])
     st.plotly_chart(fig_forecast(sel_res, horizon, ticker), use_container_width=True)
 
     with st.expander("Interpretación — Pronóstico de volatilidad"):
         st.markdown("""
-        El pronóstico de volatilidad converge a la **volatilidad incondicional de largo plazo**
-        (reversión a la media) a medida que el horizonte aumenta.
-
-        La banda sombreada representa ±10% del pronóstico puntual como indicador de
-        incertidumbre. En la práctica, este pronóstico alimenta el cálculo del **VaR**
-        dinámico (Módulo 5) y la construcción de portafolios eficientes (Módulo 6).
+        El pronóstico converge a la **volatilidad incondicional de largo plazo** a medida
+        que el horizonte aumenta. Este pronóstico alimenta el **VaR dinámico** (Módulo 5)
+        y la construcción de portafolios eficientes (Módulo 6).
         """)

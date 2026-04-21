@@ -139,13 +139,30 @@ def normality_tests(r):
     return {"jb_stat": jb_s, "jb_p": jb_p, "sw_stat": sw_s, "sw_p": sw_p}
 
 
+def kpi_card(label, value, color="#8B6914", bg="#FFFFFF", border_style="top"):
+    border_css = (
+        f"border-top:3px solid {color};"
+        if border_style == "top"
+        else f"border-left:3px solid {color};"
+    )
+    return f"""
+    <div style="background:{bg};border:1px solid #D8DDE8;{border_css}
+    border-radius:8px;padding:1.1rem 1rem;">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:.52rem;
+        color:#8896A8;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.5rem">
+        {label}</div>
+        <div style="font-family:'Playfair Display',serif;font-size:1.35rem;
+        font-weight:700;color:#1A2035">{value}</div>
+    </div>
+    """
+
+
 def show():
     render_portafolio_badge()
 
     TICKERS = get_tickers()
     TICKER_COLORS = get_ticker_colors()
 
-    # Header
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
         <div style="display:flex;align-items:baseline;gap:0.8rem;margin-bottom:6px;">
@@ -166,7 +183,6 @@ def show():
     """, unsafe_allow_html=True)
 
     with st.spinner("Cargando datos..."):
-        import pandas as pd, numpy as np
         all_log, all_sim = {}, {}
         for t in TICKERS:
             d = get_rendimientos(t, years=3)
@@ -176,7 +192,6 @@ def show():
         log_ret = pd.DataFrame(all_log).dropna()
         sim_ret = pd.DataFrame(all_sim).dropna()
 
-    # Controles
     c1, c2 = st.columns([1, 2])
     with c1:
         ticker = st.selectbox("Activo", TICKERS, index=0)
@@ -188,26 +203,59 @@ def show():
     r = log_ret[ticker] if "Log" in ret_type else sim_ret[ticker]
     label = "Log-rendimiento" if "Log" in ret_type else "Rendimiento simple"
 
-    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
 
-    # ── Estadísticas descriptivas ──
+    # ── KPIs — fila 1: métricas principales ──
     sec_title("Estadísticas Descriptivas")
-    st_vals = descriptive_stats(r)
 
     fmt_map = {
-        "Media diaria": "{:.5f}", "Media anualizada": "{:.2%}",
-        "Desv. Std. diaria": "{:.5f}", "Desv. Std. anual": "{:.2%}",
-        "Asimetría": "{:.4f}", "Curtosis (exceso)": "{:.4f}",
-        "Mínimo": "{:.4f}", "Máximo": "{:.4f}", "Observaciones": "{:.0f}",
+        "Media diaria"      : "{:.5f}",
+        "Media anualizada"  : "{:.2%}",
+        "Desv. Std. diaria" : "{:.5f}",
+        "Desv. Std. anual"  : "{:.2%}",
+        "Asimetría"         : "{:.4f}",
+        "Curtosis (exceso)" : "{:.4f}",
+        "Mínimo"            : "{:.4f}",
+        "Máximo"            : "{:.4f}",
+        "Observaciones"     : "{:.0f}",
     }
 
-    cols = st.columns(9)
-    for i, (k, v) in enumerate(st_vals.items()):
-        with cols[i]:
-            fmt = fmt_map.get(k, "{:.4f}")
-            st.metric(k, fmt.format(v))
+    st_vals = descriptive_stats(r)
 
-    st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
+    # Fila 1 — 4 métricas de rentabilidad/riesgo
+    row1 = st.columns(4)
+    kpis1 = [
+        ("Media diaria",      COLORS["gold"],    "#FFFFFF", "top"),
+        ("Media anualizada",  COLORS["gold"],    "#FFFFFF", "top"),
+        ("Desv. Std. diaria", COLORS["sky"],     "#FFFFFF", "top"),
+        ("Desv. Std. anual",  COLORS["sky"],     "#FFFFFF", "top"),
+    ]
+    for col, (k, color, bg, bstyle) in zip(row1, kpis1):
+        with col:
+            st.markdown(
+                kpi_card(k, fmt_map[k].format(st_vals[k]), color, bg, bstyle),
+                unsafe_allow_html=True
+            )
+
+    st.markdown("<div style='height:.6rem'></div>", unsafe_allow_html=True)
+
+    # Fila 2 — 5 métricas de forma/distribución
+    row2 = st.columns(5)
+    kpis2 = [
+        ("Asimetría",         COLORS["rose"],    "#FAF4F4", "left"),
+        ("Curtosis (exceso)", COLORS["rose"],    "#FAF4F4", "left"),
+        ("Mínimo",            COLORS["text"],    "#F4F6FB", "left"),
+        ("Máximo",            COLORS["emerald"], "#F4F6FB", "left"),
+        ("Observaciones",     COLORS["text"],    "#F4F6FB", "left"),
+    ]
+    for col, (k, color, bg, bstyle) in zip(row2, kpis2):
+        with col:
+            st.markdown(
+                kpi_card(k, fmt_map[k].format(st_vals[k]), color, bg, bstyle),
+                unsafe_allow_html=True
+            )
+
+    st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
 
     # ── Histograma y Q-Q ──
     col_l, col_r = st.columns(2)
@@ -223,8 +271,7 @@ def show():
         El **histograma** compara la distribución empírica de los rendimientos con una
         distribución normal de igual media y desviación estándar.
 
-        El **Q-Q Plot** (Quantile-Quantile) enfrenta los cuantiles empíricos contra los
-        teóricos normales. Si los puntos siguen la línea diagonal, la distribución es normal.
+        El **Q-Q Plot** enfrenta los cuantiles empíricos contra los teóricos normales.
         Las desviaciones en los extremos evidencian **colas pesadas** (*fat tails*), uno de
         los hechos estilizados más robustos de los mercados financieros.
         """)
@@ -235,10 +282,8 @@ def show():
 
     with st.expander("Interpretación — Agrupamiento de Volatilidad"):
         st.markdown("""
-        El gráfico de **r²** (cuadrado de los rendimientos) evidencia que períodos de alta
-        volatilidad tienden a agruparse. Este fenómeno, conocido como *volatility clustering*,
-        viola la hipótesis de homocedasticidad y justifica el uso de modelos **ARCH/GARCH**
-        (Módulo 3) para modelar la varianza condicional.
+        El gráfico de **r²** evidencia que períodos de alta volatilidad tienden a agruparse.
+        Este fenómeno justifica el uso de modelos **ARCH/GARCH** (Módulo 3).
         """)
 
     sec_title("Boxplot Comparativo — Todos los Activos", COLORS["violet"])
@@ -265,7 +310,7 @@ def show():
                         font-weight:600;color:#1A2035;">stat = {tests['jb_stat']:.4f}</div>
             <div style="font-family:'IBM Plex Mono',monospace;font-size:0.75rem;
                         color:#4A5568;margin-top:4px;">p-valor = {tests['jb_p']:.4f}</div>
-            <div style="font-family:'Inter',sans-serif;font-size:0.78rem;margin-top:8px;
+            <div style="font-size:0.78rem;margin-top:8px;
                         color:{'#8B2A2A' if rechaza_jb else '#1A6B4A'};font-weight:600;">
                 {'⛔ Rechaza normalidad' if rechaza_jb else '✅ No rechaza normalidad'}
             </div>
@@ -284,7 +329,7 @@ def show():
                         font-weight:600;color:#1A2035;">stat = {tests['sw_stat']:.4f}</div>
             <div style="font-family:'IBM Plex Mono',monospace;font-size:0.75rem;
                         color:#4A5568;margin-top:4px;">p-valor = {tests['sw_p']:.4f}</div>
-            <div style="font-family:'Inter',sans-serif;font-size:0.78rem;margin-top:8px;
+            <div style="font-size:0.78rem;margin-top:8px;
                         color:{'#8B2A2A' if rechaza_sw else '#1A6B4A'};font-weight:600;">
                 {'⛔ Rechaza normalidad' if rechaza_sw else '✅ No rechaza normalidad'}
             </div>
@@ -298,8 +343,7 @@ def show():
             <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
                         color:#8896A8;letter-spacing:0.12em;text-transform:uppercase;
                         margin-bottom:8px;">Interpretación</div>
-            <div style="font-family:'Inter',sans-serif;font-size:0.78rem;
-                        color:#4A5568;line-height:1.65;">
+            <div style="font-size:0.78rem;color:#4A5568;line-height:1.65;">
                 Ambas pruebas evalúan H₀: distribución normal.<br><br>
                 En series financieras H₀ se rechaza casi siempre por
                 <b>colas pesadas</b> y <b>asimetría</b>. Esto impacta el
@@ -331,8 +375,7 @@ def show():
                             font-weight:600;color:#1A2035;margin-bottom:8px;">
                     {titulo}
                 </div>
-                <div style="font-family:'Inter',sans-serif;font-size:0.78rem;
-                            color:#4A5568;line-height:1.65;">
+                <div style="font-size:0.78rem;color:#4A5568;line-height:1.65;">
                     {texto}
                 </div>
             </div>

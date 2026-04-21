@@ -1,17 +1,17 @@
-import os
 """
 frontend/data/client.py
 Cliente HTTP para consumir el backend FastAPI.
 Usa tickers dinámicos desde st.session_state.
 """
 from __future__ import annotations
+import os
 import logging
 import requests
 import streamlit as st
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-BACKEND_URL = "https://risklab-backend.onrender.com"
+BACKEND_URL = "http://localhost:8002"
 
 
 def _tickers_activos() -> list[str]:

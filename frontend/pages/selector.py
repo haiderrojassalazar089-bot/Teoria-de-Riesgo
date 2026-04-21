@@ -1,16 +1,13 @@
 """
 frontend/pages/selector.py
 Pantalla inicial de selección de activos del S&P 500.
-Se muestra antes de cualquier módulo. Guarda en st.session_state.
 """
 from __future__ import annotations
 import streamlit as st
 import requests
-import pandas as pd
 
 BACKEND_URL = "http://localhost:8002"
 
-# Paleta
 SECTOR_COLORS = {
     "Information Technology": "#8B6914",
     "Financials":             "#1A6B4A",
@@ -34,7 +31,6 @@ def get_color(sector: str) -> str:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def cargar_sp500() -> list[dict]:
-    """Descarga la lista del S&P 500 desde el backend (cachea 24h)."""
     try:
         r = requests.get(f"{BACKEND_URL}/sp500/tickers", timeout=30)
         r.raise_for_status()
@@ -45,7 +41,6 @@ def cargar_sp500() -> list[dict]:
 
 
 def show():
-    # ── CSS adicional para esta página ──
     st.markdown("""
     <style>
     .selector-hero {
@@ -66,37 +61,14 @@ def show():
         color: #8896A8 !important;
         font-size: 0.85rem !important;
     }
-    .sector-chip {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 3px;
-        font-size: 0.55rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        font-family: 'IBM Plex Mono', monospace;
-        margin-right: 4px;
-    }
-    .ticker-chip {
-        background: #F4F6FB;
-        border: 1px solid #D8DDE8;
-        border-radius: 6px;
-        padding: 6px 12px;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.8rem;
-        margin: 3px;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-    # ── Hero ──
     st.markdown("""
     <div class="selector-hero">
         <h1>Risk<em style="color:#8B6914">Lab</em> · Constructor de Portafolio</h1>
         <p>Selecciona entre 2 y 10 empresas del S&P 500 para comenzar el análisis.
-        Todos los módulos M1–M8 y las herramientas avanzadas se adaptarán a tu selección.</p>
+        Todos los módulos M1-M8 y las herramientas avanzadas se adaptarán a tu selección.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -107,41 +79,8 @@ def show():
         st.error("No se pudo conectar al backend. Verifica que esté corriendo en el puerto 8002.")
         return
 
-    # ── Búsqueda y filtros ──
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        busqueda = st.text_input(
-            "🔍 Buscar empresa o ticker",
-            placeholder="ej: Apple, MSFT, Amazon, Technology...",
-            label_visibility="collapsed",
-        )
-    with col2:
-        sectores_disponibles = sorted(set(i["sector"] for i in sp500 if i["sector"]))
-        sector_filtro = st.selectbox(
-            "Sector",
-            ["Todos los sectores"] + sectores_disponibles,
-            label_visibility="collapsed",
-        )
+    opciones = {f"{i['ticker']} — {i['name']}": i["ticker"] for i in sp500}
 
-    # Filtrar lista
-    filtrados = sp500
-    if busqueda:
-        q = busqueda.lower()
-        filtrados = [i for i in filtrados if q in i["ticker"].lower() or q in i["name"].lower()]
-    if sector_filtro != "Todos los sectores":
-        filtrados = [i for i in filtrados if i["sector"] == sector_filtro]
-
-    st.markdown(f"""
-    <div style="font-family:'IBM Plex Mono',monospace;font-size:.58rem;
-    color:#8896A8;letter-spacing:.12em;text-transform:uppercase;margin-bottom:1rem">
-    {len(filtrados)} empresas encontradas · {len(sp500)} en el S&P 500
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Selector multiselect ──
-    opciones = {f"{i['ticker']} — {i['name']}": i["ticker"] for i in filtrados}
-
-    # Recuperar selección previa si existe
     seleccion_previa = []
     if "tickers_seleccionados" in st.session_state:
         prev = st.session_state["tickers_seleccionados"]
@@ -152,14 +91,13 @@ def show():
         options=list(opciones.keys()),
         default=seleccion_previa,
         max_selections=10,
-        help="Mínimo 2 empresas, máximo 10. Puedes buscar por nombre o ticker.",
+        help="Mínimo 2 empresas, máximo 10.",
         label_visibility="collapsed",
         placeholder="Haz clic para buscar y seleccionar empresas...",
     )
 
     tickers_sel = [opciones[s] for s in seleccionados_raw]
 
-    # ── Vista previa de la selección ──
     if tickers_sel:
         st.markdown(f"""
         <div style="font-family:'IBM Plex Mono',monospace;font-size:.55rem;
@@ -190,7 +128,6 @@ def show():
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ── Sugerencias rápidas ──
     st.markdown("""
     <div style="font-family:'IBM Plex Mono',monospace;font-size:.55rem;
     letter-spacing:.16em;text-transform:uppercase;color:#8896A8;
@@ -200,18 +137,17 @@ def show():
     """, unsafe_allow_html=True)
 
     sugerencias = {
-        "🏆 Big Tech": ["AAPL", "MSFT", "GOOGL", "META", "AMZN"],
-        "🏦 Financiero": ["JPM", "BAC", "GS", "MS", "V"],
-        "⚕️ Salud": ["JNJ", "UNH", "PFE", "ABBV", "MRK"],
-        "⚡ Energía": ["XOM", "CVX", "COP", "SLB", "EOG"],
-        "🛍️ Consumo": ["WMT", "HD", "MCD", "SBUX", "NKE"],
+        "🏆 Big Tech":           ["AAPL", "MSFT", "GOOGL", "META", "AMZN"],
+        "🏦 Financiero":         ["JPM", "BAC", "GS", "MS", "V"],
+        "⚕️ Salud":              ["JNJ", "UNH", "PFE", "ABBV", "MRK"],
+        "⚡ Energía":            ["XOM", "CVX", "COP", "SLB", "EOG"],
+        "🛍️ Consumo":           ["WMT", "HD", "MCD", "SBUX", "NKE"],
         "📡 Telecomunicaciones": ["T", "VZ", "CMCSA", "NFLX", "DIS"],
     }
 
     cols_sug = st.columns(len(sugerencias))
     for idx, (nombre, tickers_sug) in enumerate(sugerencias.items()):
         with cols_sug[idx]:
-            # Verificar cuáles están en la lista del S&P500 cargada
             disponibles = [t for t in tickers_sug if any(i["ticker"] == t for i in sp500)]
             if st.button(nombre, use_container_width=True, key=f"sug_{idx}"):
                 st.session_state["tickers_seleccionados"] = disponibles
@@ -220,11 +156,10 @@ def show():
 
     st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
 
-    # ── Validación y confirmación ──
     if len(tickers_sel) < 2:
         st.info("Selecciona al menos 2 empresas para continuar.")
     else:
-        col_btn1, col_btn2, col_btn3 = st.columns([2, 1, 1])
+        col_btn1, col_btn2 = st.columns([3, 1])
         with col_btn1:
             if st.button(
                 f"✓ Analizar portafolio con {len(tickers_sel)} activos",
@@ -240,12 +175,11 @@ def show():
                 st.rerun()
 
         with col_btn2:
-            if st.button("↺ Limpiar selección", use_container_width=True):
+            if st.button("↺ Limpiar", use_container_width=True):
                 st.session_state["tickers_seleccionados"] = []
                 st.session_state["portafolio_confirmado"] = False
                 st.rerun()
 
-    # ── Estado actual ──
     if st.session_state.get("portafolio_confirmado"):
         t_act = st.session_state.get("tickers_seleccionados", [])
         st.markdown(f"""
