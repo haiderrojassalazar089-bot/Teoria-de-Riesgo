@@ -1,21 +1,15 @@
-# ══════════════════════════════════════════════════════
-# RiskLab USTA — Requirements unificado
-# Backend (FastAPI) + Frontend (Streamlit)
-# Python 3.12.1
-# ══════════════════════════════════════════════════════
-
 # ── Web / API ───────────────────────────────────────
-fastapi==0.136.0
-uvicorn==0.44.0
+fastapi==0.115.0
+uvicorn==0.30.6
 requests==2.32.3
 
 # ── Validación y configuración ──────────────────────
-pydantic==2.13.1
-pydantic-settings==2.13.1
-python-dotenv==1.2.2
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
 
 # ── Frontend ────────────────────────────────────────
-streamlit==1.43.2
+streamlit==1.38.0
 plotly==5.22.0
 
 # ── Datos de mercado ────────────────────────────────
@@ -30,5 +24,8 @@ statsmodels==0.14.2
 # ── Modelos de volatilidad ──────────────────────────
 arch==7.0.0
 
-# ── Optimización de portafolios ─────────────────────
+# ── Optimización ────────────────────────────────────
 PyPortfolioOpt==1.5.6
+
+# ── Parsing HTML ────────────────────────────────────
+lxml>=4.9.0
