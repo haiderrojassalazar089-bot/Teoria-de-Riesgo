@@ -14,8 +14,9 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.client import get_rendimientos, TICKERS, TICKER_COLORS
+from data.client import get_rendimientos
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
 # ── Configuraciones de modelos ────────────────────────────────
 MODELS = {
@@ -136,6 +137,10 @@ def render_model_card(col, name, res, is_best):
         c3.metric("BIC",   f"{res.bic:.2f}")
 
 def show():
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
         <div style="display:flex;align-items:baseline;gap:0.8rem;margin-bottom:6px;">
@@ -239,7 +244,6 @@ def show():
         El **EGARCH** modela ln(σ²), garantizando varianza positiva sin restricciones.
         """)
 
-    # Seleccionar modelo principal para diagnóstico
     sel_name = st.selectbox("Modelo para diagnóstico y pronóstico",
                             list(valid.keys()) if valid else ["—"],
                             index=list(valid.keys()).index(best_k) if best_k in valid else 0)

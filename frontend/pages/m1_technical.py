@@ -10,8 +10,9 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.client import get_indicadores, get_precios, TICKERS, TICKER_COLORS
+from data.client import get_indicadores, get_precios
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
 
 # ── Indicadores ───────────────────────────────────────────────
@@ -45,6 +46,7 @@ def stochastic(h, l, c, k=14, d=3):
 # ── Gráficos ──────────────────────────────────────────────────
 
 def fig_price(df, ticker, s1, s2, e1, chart_type):
+    TICKER_COLORS = get_ticker_colors()
     c   = df["Close"]
     col = TICKER_COLORS.get(ticker, COLORS["gold"])
     fig = go.Figure()
@@ -146,6 +148,11 @@ def fig_stoch(df):
 # ── Layout ────────────────────────────────────────────────────
 
 def show():
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+    TICKER_COLORS = get_ticker_colors()
+
     # Header
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
@@ -197,7 +204,7 @@ def show():
         df["fecha"] = pd.to_datetime(df["fecha"])
         df = df.set_index("fecha")
         df.columns = [c.capitalize() for c in df.columns]
-        df.index.name = "Date" 
+        df.index.name = "Date"
 
     if df.empty:
         st.error("No se pudieron cargar los datos. Intenta nuevamente.")

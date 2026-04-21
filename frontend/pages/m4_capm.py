@@ -12,9 +12,11 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.client import get_capm, get_precios, TICKERS, TICKER_COLORS, SECTOR_MAP
-BENCHMARK = '^GSPC'
+from data.client import get_capm, get_precios, SECTOR_MAP
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
+
+BENCHMARK = '^GSPC'
 
 
 # ── Cálculos CAPM ─────────────────────────────────────────────
@@ -54,6 +56,7 @@ def decompose_risk(beta, ret_asset, ret_mkt):
 # ── Gráficos ──────────────────────────────────────────────────
 
 def fig_scatter_single(reg, ticker):
+    TICKER_COLORS = get_ticker_colors()
     col   = TICKER_COLORS.get(ticker, COLORS["gold"])
     x_rng = np.linspace(reg["r_mkt"].min(), reg["r_mkt"].max(), 200)
     y_fit = reg["alpha"] + reg["beta"] * x_rng
@@ -63,27 +66,23 @@ def fig_scatter_single(reg, ticker):
                 ((reg["r_mkt"] - reg["r_mkt"].mean()) ** 2).sum()
             )
     fig = go.Figure()
-    # IC 95%
     fig.add_trace(go.Scatter(
         x=np.concatenate([x_rng, x_rng[::-1]]),
         y=np.concatenate([y_fit + ci, (y_fit - ci)[::-1]]),
         fill="toself", fillcolor="rgba(139,105,20,0.06)",
         line=dict(width=0), name="IC 95%", hoverinfo="skip",
     ))
-    # Puntos
     fig.add_trace(go.Scatter(
         x=reg["r_mkt"].values, y=reg["r_asset"].values,
         mode="markers", name=ticker,
         marker=dict(color=col, size=4, opacity=0.35),
         hovertemplate="Mkt: %{x:.4f}<br>" + ticker + ": %{y:.4f}<extra></extra>",
     ))
-    # Línea de regresión
     fig.add_trace(go.Scatter(
         x=x_rng, y=y_fit, mode="lines",
         name=f"β = {reg['beta']:.4f}",
         line=dict(color=col, width=2),
     ))
-    # Línea de mercado (β=1)
     fig.add_trace(go.Scatter(
         x=x_rng, y=x_rng, mode="lines",
         name="β = 1 (mercado)",
@@ -103,7 +102,8 @@ def fig_scatter_single(reg, ticker):
     return fig
 
 
-def fig_scatter_all(log_ret):
+def fig_scatter_all(log_ret, TICKERS):
+    TICKER_COLORS = get_ticker_colors()
     fig = go.Figure()
     ret_mkt = log_ret[BENCHMARK]
     for ticker in TICKERS:
@@ -133,16 +133,15 @@ def fig_scatter_all(log_ret):
     return fig
 
 
-def fig_sml(betas, exp_rets, rf_daily, rm_daily):
+def fig_sml(betas, exp_rets, rf_daily, rm_daily, TICKERS):
+    TICKER_COLORS = get_ticker_colors()
     b_range = np.linspace(-0.2, 2.0, 200)
     sml_y   = (rf_daily + b_range * (rm_daily - rf_daily)) * 252
     fig = go.Figure()
-    # SML
     fig.add_trace(go.Scatter(
         x=b_range, y=sml_y, mode="lines", name="SML",
         line=dict(color=COLORS["text3"], width=1.2, dash="dot"),
     ))
-    # Rf
     fig.add_trace(go.Scatter(
         x=[0], y=[rf_daily * 252], mode="markers+text",
         name="Rf", text=["Rf"],
@@ -150,7 +149,6 @@ def fig_sml(betas, exp_rets, rf_daily, rm_daily):
         textfont=dict(color=COLORS["emerald"], size=10, family="IBM Plex Mono"),
         marker=dict(color=COLORS["emerald"], size=10, symbol="diamond"),
     ))
-    # Activos
     for ticker in TICKERS:
         col   = TICKER_COLORS.get(ticker, COLORS["gold"])
         label, _ = classify_beta(betas[ticker])
@@ -180,7 +178,7 @@ def fig_sml(betas, exp_rets, rf_daily, rm_daily):
     return fig
 
 
-def fig_risk_decomposition(betas, log_ret):
+def fig_risk_decomposition(betas, log_ret, TICKERS):
     ret_mkt  = log_ret[BENCHMARK]
     sist_pct = []
     idio_pct = []
@@ -222,6 +220,11 @@ def sec_title(text, color=None):
 
 
 def show():
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+    TICKER_COLORS = get_ticker_colors()
+
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
         <div style="display:flex;align-items:baseline;gap:0.8rem;margin-bottom:6px;">
@@ -259,7 +262,6 @@ def show():
     ret_mkt  = log_ret[BENCHMARK]
     rm_daily = ret_mkt.mean()
 
-    # Banner tasa libre de riesgo
     st.markdown(f"""
     <div style="background:#FFFFFF;border:1px solid #D8DDE8;
                 border-left:3px solid {COLORS['gold']};border-radius:6px;
@@ -284,13 +286,11 @@ def show():
     </div>
     """, unsafe_allow_html=True)
 
-    # Selector activo
     ticker = st.selectbox("Activo para análisis detallado", TICKERS, index=0)
     reg    = compute_beta(log_ret[ticker], ret_mkt)
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── KPIs del activo seleccionado ──
     sec_title(f"① Beta y Métricas CAPM — {ticker}")
     label, col_beta = classify_beta(reg["beta"])
     er_ann = expected_return_capm(reg["beta"], rf["daily"], rm_daily) * 252
@@ -305,14 +305,13 @@ def show():
 
     st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
 
-    # ── Dispersión individual + todos ──
     col_l, col_r = st.columns(2)
     with col_l:
         sec_title(f"② Dispersión {ticker} vs S&P 500 — Línea de Regresión", COLORS["sky"])
         st.plotly_chart(fig_scatter_single(reg, ticker), use_container_width=True)
     with col_r:
         sec_title("Todos los Activos vs S&P 500", COLORS["sky"])
-        st.plotly_chart(fig_scatter_all(log_ret), use_container_width=True)
+        st.plotly_chart(fig_scatter_all(log_ret, TICKERS), use_container_width=True)
 
     with st.expander("Interpretación — Beta y regresión MCO"):
         st.markdown(f"""
@@ -331,7 +330,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Tabla resumen CAPM ──
     sec_title("③ Tabla Resumen CAPM — Todos los Activos", COLORS["emerald"])
 
     betas    = {}
@@ -345,7 +343,7 @@ def show():
         ps_t, pi_t  = decompose_risk(r["beta"], log_ret[t], ret_mkt)
         rows.append({
             "Ticker"         : t,
-            "Sector"         : SECTOR_MAP[t],
+            "Sector"         : SECTOR_MAP.get(t, "—"),
             "Beta (β)"       : round(r["beta"], 4),
             "Alpha anual"    : round(r["alpha"] * 252, 4),
             "R²"             : round(r["r2"], 4),
@@ -359,15 +357,14 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── SML + Descomposición ──
     col_l2, col_r2 = st.columns(2)
     with col_l2:
         sec_title("④ Security Market Line (SML)", COLORS["violet"])
-        st.plotly_chart(fig_sml(betas, exp_rets, rf["daily"], rm_daily),
+        st.plotly_chart(fig_sml(betas, exp_rets, rf["daily"], rm_daily, TICKERS),
                         use_container_width=True)
     with col_r2:
         sec_title("⑤ Descomposición del Riesgo Total", COLORS["rose"])
-        st.plotly_chart(fig_risk_decomposition(betas, log_ret),
+        st.plotly_chart(fig_risk_decomposition(betas, log_ret, TICKERS),
                         use_container_width=True)
 
     with st.expander("Interpretación — SML y riesgo sistemático vs idiosincrático"):

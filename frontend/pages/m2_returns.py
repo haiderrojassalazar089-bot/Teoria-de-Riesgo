@@ -12,8 +12,9 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.client import get_rendimientos, get_precios, TICKERS, TICKER_COLORS, SECTOR_MAP
+from data.client import get_rendimientos, get_precios, SECTOR_MAP
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
 
 def sec_title(text, color=None):
@@ -28,6 +29,7 @@ def sec_title(text, color=None):
 
 
 def fig_histogram(r, ticker):
+    TICKER_COLORS = get_ticker_colors()
     mu, sigma = r.mean(), r.std()
     x = np.linspace(r.min(), r.max(), 300)
     pdf_normal = stats.norm.pdf(x, mu, sigma)
@@ -56,6 +58,7 @@ def fig_histogram(r, ticker):
 
 
 def fig_qq(r, ticker):
+    TICKER_COLORS = get_ticker_colors()
     (osm, osr), (slope, intercept, _) = stats.probplot(r.values, dist="norm")
     line_y = slope * np.array(osm) + intercept
     col = TICKER_COLORS.get(ticker, COLORS["gold"])
@@ -79,6 +82,7 @@ def fig_qq(r, ticker):
 
 
 def fig_volatility(r, ticker):
+    TICKER_COLORS = get_ticker_colors()
     r2 = r ** 2
     col = TICKER_COLORS.get(ticker, COLORS["gold"])
     fig = go.Figure()
@@ -93,7 +97,8 @@ def fig_volatility(r, ticker):
     return fig
 
 
-def fig_boxplot(returns_df):
+def fig_boxplot(returns_df, TICKERS):
+    TICKER_COLORS = get_ticker_colors()
     fig = go.Figure()
     for ticker in TICKERS:
         if ticker not in returns_df.columns:
@@ -135,6 +140,11 @@ def normality_tests(r):
 
 
 def show():
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+    TICKER_COLORS = get_ticker_colors()
+
     # Header
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
@@ -232,7 +242,7 @@ def show():
         """)
 
     sec_title("Boxplot Comparativo — Todos los Activos", COLORS["violet"])
-    st.plotly_chart(fig_boxplot(log_ret), use_container_width=True)
+    st.plotly_chart(fig_boxplot(log_ret, TICKERS), use_container_width=True)
 
     # ── Pruebas de normalidad ──
     st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)

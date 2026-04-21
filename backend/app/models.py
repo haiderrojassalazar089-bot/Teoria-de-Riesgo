@@ -1,11 +1,10 @@
 """
 backend/app/models.py
-Modelos Pydantic para request y response de todos los endpoints.
+Modelos Pydantic — request y response de todos los endpoints.
+Incluye validación dinámica contra el S&P 500.
 """
-
 from __future__ import annotations
 from typing import Optional
-from datetime import date
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -13,17 +12,32 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # REQUEST MODELS
 # ════════════════════════════════════════════════
 
-class PortfolioRequest(BaseModel):
-    """Request para cálculo de VaR/CVaR."""
+class SP500TickerRequest(BaseModel):
+    """Request base que valida tickers contra el S&P 500 en tiempo real."""
     tickers: list[str] = Field(
-        description="Lista de tickers del portafolio",
+        description="Lista de tickers — deben cotizar en el S&P 500",
         min_length=1,
-        max_length=20,
-        examples=[["AAPL", "JPM", "XOM", "JNJ", "AMZN"]]
+        max_length=10,
     )
+
+    @field_validator("tickers")
+    @classmethod
+    def validate_sp500_tickers(cls, v: list[str]) -> list[str]:
+        from .sp500_service import validate_tickers_sp500
+        cleaned = [t.strip().upper().replace(".", "-") for t in v]
+        ok, invalid = validate_tickers_sp500(cleaned)
+        if not ok:
+            raise ValueError(
+                f"Los siguientes tickers no pertenecen al S&P 500: {invalid}. "
+                f"Consulta GET /sp500/tickers para ver la lista completa."
+            )
+        return cleaned
+
+
+class PortfolioRequest(SP500TickerRequest):
+    """Request para cálculo de VaR/CVaR con tickers dinámicos del S&P 500."""
     weights: list[float] = Field(
         description="Pesos del portafolio (deben sumar 1.0)",
-        examples=[[0.2, 0.2, 0.2, 0.2, 0.2]]
     )
     confidence: float = Field(
         default=0.95,
@@ -33,248 +47,344 @@ class PortfolioRequest(BaseModel):
     years: int = Field(
         default=3,
         ge=1, le=10,
-        description="Años de historia para el cálculo"
+        description="Años de historia"
     )
-
-    @field_validator("tickers")
-    @classmethod
-    def validate_tickers(cls, v: list[str]) -> list[str]:
-        for ticker in v:
-            if len(ticker) < 1 or len(ticker) > 10:
-                raise ValueError(f"Ticker '{ticker}' inválido: debe tener entre 1 y 10 caracteres")
-            if not ticker.replace("^", "").replace(".", "").isalnum():
-                raise ValueError(f"Ticker '{ticker}' contiene caracteres inválidos")
-        return [t.upper() for t in v]
 
     @field_validator("weights")
     @classmethod
     def validate_weights_range(cls, v: list[float]) -> list[float]:
         for w in v:
             if w < 0 or w > 1:
-                raise ValueError("Cada peso debe estar entre 0 y 1")
+                raise ValueError(f"Cada peso debe estar entre 0 y 1, recibido: {w}")
         return v
 
     @model_validator(mode="after")
     def validate_tickers_weights_match(self) -> "PortfolioRequest":
         if len(self.tickers) != len(self.weights):
-            raise ValueError("El número de tickers debe coincidir con el número de pesos")
+            raise ValueError(
+                f"len(tickers)={len(self.tickers)} ≠ len(weights)={len(self.weights)}"
+            )
         total = sum(self.weights)
         if abs(total - 1.0) > 0.01:
             raise ValueError(f"Los pesos deben sumar 1.0 (suma actual: {total:.4f})")
         return self
 
 
-class FronteraRequest(BaseModel):
-    """Request para cálculo de frontera eficiente."""
-    tickers: list[str] = Field(
-        description="Tickers para la optimización",
-        min_length=2,
-        max_length=20,
-        examples=[["AAPL", "JPM", "XOM", "JNJ", "AMZN"]]
-    )
-    years: int = Field(default=3, ge=1, le=10, description="Años de historia")
-    n_portfolios: int = Field(
-        default=10000,
-        ge=1000, le=50000,
-        description="Número de portafolios a simular"
-    )
-    target_return: Optional[float] = Field(
-        default=None,
-        ge=0.0, le=5.0,
-        description="Rendimiento objetivo anual (opcional, ej: 0.15 = 15%)"
-    )
+class FronteraRequest(SP500TickerRequest):
+    """Request para frontera eficiente con tickers dinámicos."""
+    years: int = Field(default=3, ge=1, le=10)
+    n_portfolios: int = Field(default=10000, ge=1000, le=50000)
+    target_return: Optional[float] = Field(default=None, ge=0.0, le=5.0)
 
     @field_validator("tickers")
     @classmethod
-    def validate_tickers(cls, v: list[str]) -> list[str]:
-        return [t.upper() for t in v]
+    def at_least_two(cls, v: list[str]) -> list[str]:
+        if len(v) < 2:
+            raise ValueError("Se necesitan al menos 2 tickers para la frontera eficiente.")
+        return v
+
+
+class DynamicAnalysisRequest(SP500TickerRequest):
+    """Request genérico para análisis con tickers dinámicos."""
+    years: int = Field(default=3, ge=1, le=10)
+    benchmark: str = Field(default="^GSPC", description="Ticker del benchmark")
+    start_date: Optional[str] = Field(
+        default=None,
+        description="Fecha inicio YYYY-MM-DD (para Máquina del Tiempo)"
+    )
+    end_date: Optional[str] = Field(
+        default=None,
+        description="Fecha fin YYYY-MM-DD (para Máquina del Tiempo)"
+    )
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def validate_date(cls, v):
+        if v is None:
+            return v
+        from datetime import datetime
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Fecha inválida '{v}', formato requerido: YYYY-MM-DD")
+        return v
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "DynamicAnalysisRequest":
+        from datetime import datetime
+        if self.start_date and self.end_date:
+            s = datetime.strptime(self.start_date, "%Y-%m-%d")
+            e = datetime.strptime(self.end_date,   "%Y-%m-%d")
+            if s >= e:
+                raise ValueError("start_date debe ser anterior a end_date")
+            delta = (e - s).days
+            if delta < 30:
+                raise ValueError("El rango mínimo es 30 días")
+            if delta > 3650:
+                raise ValueError("El rango máximo es 10 años (3650 días)")
+        return self
+
+
+class MonteCarloRequest(SP500TickerRequest):
+    """Request para simulación de Monte Carlo visual."""
+    weights: list[float] = Field(description="Pesos del portafolio")
+    horizon_days: int = Field(default=252, ge=30, le=1260, description="Horizonte en días hábiles")
+    n_simulations: int = Field(default=500, ge=100, le=2000, description="Número de trayectorias")
+    years_history: int = Field(default=3, ge=1, le=10)
+
+    @field_validator("weights")
+    @classmethod
+    def validate_weights(cls, v):
+        for w in v:
+            if w < 0 or w > 1:
+                raise ValueError(f"Peso {w} fuera de [0,1]")
+        return v
+
+    @model_validator(mode="after")
+    def match_lengths(self):
+        if len(self.tickers) != len(self.weights):
+            raise ValueError("len(tickers) ≠ len(weights)")
+        if abs(sum(self.weights) - 1.0) > 0.01:
+            raise ValueError(f"Σpesos = {sum(self.weights):.4f} ≠ 1.0")
+        return self
+
+
+class DueloRequest(BaseModel):
+    """Request para duelo de dos portafolios."""
+    portafolio_a: PortfolioRequest = Field(description="Portafolio A")
+    portafolio_b: PortfolioRequest = Field(description="Portafolio B")
+    years: int = Field(default=3, ge=1, le=10)
 
 
 # ════════════════════════════════════════════════
-# RESPONSE MODELS
+# RESPONSE MODELS (los mismos de antes + nuevos)
 # ════════════════════════════════════════════════
 
 class ActivoInfo(BaseModel):
-    """Información básica de un activo."""
-    ticker:  str = Field(description="Símbolo del activo")
-    sector:  str = Field(description="Sector económico")
-    nombre:  str = Field(description="Nombre de la empresa")
-    ultimo:  float = Field(description="Último precio de cierre")
-    cambio_hoy: float = Field(description="Cambio porcentual del día")
+    ticker:  str
+    sector:  str
+    nombre:  str
+    ultimo:  float
+    cambio_hoy: float
 
 
 class ActivosResponse(BaseModel):
-    """Response para GET /activos"""
-    activos:   list[ActivoInfo] = Field(description="Lista de activos del portafolio")
-    benchmark: str = Field(description="Ticker del benchmark")
-    total:     int = Field(description="Total de activos")
+    activos:   list[ActivoInfo]
+    benchmark: str
+    total:     int
 
 
 class PrecioItem(BaseModel):
-    """Un punto de precio OHLCV."""
-    fecha:   str   = Field(description="Fecha en formato YYYY-MM-DD")
-    open:    float = Field(description="Precio de apertura")
-    high:    float = Field(description="Precio máximo")
-    low:     float = Field(description="Precio mínimo")
-    close:   float = Field(description="Precio de cierre ajustado")
-    volume:  int   = Field(description="Volumen negociado")
+    fecha:   str
+    open:    float
+    high:    float
+    low:     float
+    close:   float
+    volume:  int
 
 
 class PreciosResponse(BaseModel):
-    """Response para GET /precios/{ticker}"""
-    ticker:      str            = Field(description="Ticker consultado")
-    start_date:  str            = Field(description="Fecha inicial")
-    end_date:    str            = Field(description="Fecha final")
-    n_dias:      int            = Field(description="Número de días de datos")
-    precios:     list[PrecioItem] = Field(description="Serie de precios OHLCV")
+    ticker:     str
+    start_date: str
+    end_date:   str
+    n_dias:     int
+    precios:    list[PrecioItem]
 
 
 class RendimientoStats(BaseModel):
-    """Estadísticas de rendimientos."""
-    media_diaria:       float = Field(description="Media diaria")
-    media_anualizada:   float = Field(description="Media anualizada (×252)")
-    std_diaria:         float = Field(description="Desviación estándar diaria")
-    std_anualizada:     float = Field(description="Desviación estándar anualizada")
-    asimetria:          float = Field(description="Asimetría (skewness)")
-    curtosis:           float = Field(description="Curtosis en exceso")
-    minimo:             float = Field(description="Rendimiento mínimo")
-    maximo:             float = Field(description="Rendimiento máximo")
-    jarque_bera_stat:   float = Field(description="Estadístico Jarque-Bera")
-    jarque_bera_p:      float = Field(description="p-valor Jarque-Bera")
-    n_obs:              int   = Field(description="Número de observaciones")
+    media_diaria:      float
+    media_anualizada:  float
+    std_diaria:        float
+    std_anualizada:    float
+    asimetria:         float
+    curtosis:          float
+    minimo:            float
+    maximo:            float
+    jarque_bera_stat:  float
+    jarque_bera_p:     float
+    n_obs:             int
 
 
 class RendimientosResponse(BaseModel):
-    """Response para GET /rendimientos/{ticker}"""
-    ticker:        str             = Field(description="Ticker consultado")
-    log_returns:   list[float]     = Field(description="Serie de log-rendimientos")
-    simple_returns: list[float]    = Field(description="Serie de rendimientos simples")
-    fechas:        list[str]       = Field(description="Fechas correspondientes")
-    stats_log:     RendimientoStats = Field(description="Estadísticas de log-rendimientos")
-    stats_simple:  RendimientoStats = Field(description="Estadísticas de rendimientos simples")
+    ticker:         str
+    log_returns:    list[float]
+    simple_returns: list[float]
+    fechas:         list[str]
+    stats_log:      RendimientoStats
+    stats_simple:   RendimientoStats
 
 
 class IndicadoresResponse(BaseModel):
-    """Response para GET /indicadores/{ticker}"""
-    ticker:    str         = Field(description="Ticker consultado")
-    fechas:    list[str]   = Field(description="Fechas")
-    close:     list[float] = Field(description="Precios de cierre")
-    sma_20:    list[Optional[float]] = Field(description="SMA 20 períodos")
-    sma_50:    list[Optional[float]] = Field(description="SMA 50 períodos")
-    ema_21:    list[Optional[float]] = Field(description="EMA 21 períodos")
-    bb_upper:  list[Optional[float]] = Field(description="Banda de Bollinger superior")
-    bb_lower:  list[Optional[float]] = Field(description="Banda de Bollinger inferior")
-    rsi:       list[Optional[float]] = Field(description="RSI 14 períodos")
-    macd:      list[Optional[float]] = Field(description="Línea MACD")
-    macd_signal: list[Optional[float]] = Field(description="Línea de señal MACD")
-    macd_hist: list[Optional[float]] = Field(description="Histograma MACD")
-    stoch_k:   list[Optional[float]] = Field(description="Oscilador estocástico %K")
-    stoch_d:   list[Optional[float]] = Field(description="Oscilador estocástico %D")
+    ticker:      str
+    fechas:      list[str]
+    close:       list[float]
+    sma_20:      list[Optional[float]]
+    sma_50:      list[Optional[float]]
+    ema_21:      list[Optional[float]]
+    bb_upper:    list[Optional[float]]
+    bb_lower:    list[Optional[float]]
+    rsi:         list[Optional[float]]
+    macd:        list[Optional[float]]
+    macd_signal: list[Optional[float]]
+    macd_hist:   list[Optional[float]]
+    stoch_k:     list[Optional[float]]
+    stoch_d:     list[Optional[float]]
 
 
 class VaRResponse(BaseModel):
-    """Response para POST /var"""
-    tickers:   list[str]  = Field(description="Tickers del portafolio")
-    weights:   list[float] = Field(description="Pesos utilizados")
-    confidence: float      = Field(description="Nivel de confianza")
-    var_parametrico_95:  float = Field(description="VaR paramétrico al 95%")
-    var_parametrico_99:  float = Field(description="VaR paramétrico al 99%")
-    var_historico_95:    float = Field(description="VaR histórico al 95%")
-    var_historico_99:    float = Field(description="VaR histórico al 99%")
-    var_montecarlo_95:   float = Field(description="VaR Montecarlo al 95%")
-    var_montecarlo_99:   float = Field(description="VaR Montecarlo al 99%")
-    cvar_95:             float = Field(description="CVaR (Expected Shortfall) al 95%")
-    cvar_99:             float = Field(description="CVaR (Expected Shortfall) al 99%")
-    var_anualizado_95:   float = Field(description="VaR paramétrico anualizado al 95%")
-    var_anualizado_99:   float = Field(description="VaR paramétrico anualizado al 99%")
-    distribucion:        list[float] = Field(description="Distribución de rendimientos del portafolio")
+    tickers:             list[str]
+    weights:             list[float]
+    confidence:          float
+    var_parametrico_95:  float
+    var_parametrico_99:  float
+    var_historico_95:    float
+    var_historico_99:    float
+    var_montecarlo_95:   float
+    var_montecarlo_99:   float
+    cvar_95:             float
+    cvar_99:             float
+    var_anualizado_95:   float
+    var_anualizado_99:   float
+    distribucion:        list[float]
 
 
 class CAPMItem(BaseModel):
-    """CAPM para un activo."""
-    ticker:          str   = Field(description="Ticker del activo")
-    sector:          str   = Field(description="Sector")
-    beta:            float = Field(description="Beta calculado por MCO")
-    alpha_anual:     float = Field(description="Alpha de Jensen anualizado")
-    r_cuadrado:      float = Field(description="R² de la regresión")
-    retorno_esperado: float = Field(description="Retorno esperado anual según CAPM")
-    clasificacion:   str   = Field(description="Agresivo / Neutro / Defensivo")
-    riesgo_sistematico_pct: float = Field(description="% del riesgo total que es sistemático")
-    riesgo_idiosincratico_pct: float = Field(description="% del riesgo total idiosincrático")
+    ticker:                   str
+    sector:                   str
+    beta:                     float
+    alpha_anual:              float
+    r_cuadrado:               float
+    retorno_esperado:         float
+    clasificacion:            str
+    riesgo_sistematico_pct:   float
+    riesgo_idiosincratico_pct: float
 
 
 class CAPMResponse(BaseModel):
-    """Response para GET /capm"""
-    rf_display:  str         = Field(description="Tasa libre de riesgo (texto)")
-    rf_annual:   float       = Field(description="Tasa libre de riesgo anual")
-    rf_source:   str         = Field(description="Fuente de la tasa libre de riesgo")
-    rf_date:     str         = Field(description="Fecha de actualización de la Rf")
-    benchmark:   str         = Field(description="Benchmark utilizado")
-    rm_annual:   float       = Field(description="Rendimiento anualizado del mercado")
-    activos:     list[CAPMItem] = Field(description="CAPM por activo")
+    rf_display: str
+    rf_annual:  float
+    rf_source:  str
+    rf_date:    str
+    benchmark:  str
+    rm_annual:  float
+    activos:    list[CAPMItem]
 
 
 class PortafolioOptimo(BaseModel):
-    """Un portafolio óptimo de la frontera eficiente."""
-    nombre:     str        = Field(description="Nombre del portafolio")
-    pesos:      list[float] = Field(description="Pesos de cada activo")
-    retorno:    float      = Field(description="Retorno esperado anual")
-    volatilidad: float     = Field(description="Volatilidad anual")
-    sharpe:     float      = Field(description="Ratio de Sharpe")
+    nombre:      str
+    pesos:       list[float]
+    retorno:     float
+    volatilidad: float
+    sharpe:      float
 
 
 class FronteraResponse(BaseModel):
-    """Response para POST /frontera-eficiente"""
-    tickers:         list[str]    = Field(description="Tickers utilizados")
-    n_simulaciones:  int          = Field(description="Portafolios simulados")
-    retornos:        list[float]  = Field(description="Retornos de portafolios simulados")
-    volatilidades:   list[float]  = Field(description="Volatilidades de portafolios simulados")
-    sharpes:         list[float]  = Field(description="Sharpes de portafolios simulados")
-    pesos_simulados: list[list[float]] = Field(description="Pesos de cada portafolio simulado")
-    min_varianza:    PortafolioOptimo  = Field(description="Portafolio de mínima varianza")
-    max_sharpe:      PortafolioOptimo  = Field(description="Portafolio de máximo Sharpe")
-    objetivo:        Optional[PortafolioOptimo] = Field(
-        default=None, description="Portafolio con rendimiento objetivo (si se especificó)"
-    )
+    tickers:          list[str]
+    n_simulaciones:   int
+    retornos:         list[float]
+    volatilidades:    list[float]
+    sharpes:          list[float]
+    pesos_simulados:  list[list[float]]
+    min_varianza:     PortafolioOptimo
+    max_sharpe:       PortafolioOptimo
+    objetivo:         Optional[PortafolioOptimo] = None
 
 
 class AlertaItem(BaseModel):
-    """Alerta de señal para un activo."""
-    ticker:      str  = Field(description="Ticker del activo")
-    indicador:   str  = Field(description="Indicador que generó la señal")
-    señal:       str  = Field(description="COMPRA / VENTA / NEUTRAL")
-    descripcion: str  = Field(description="Descripción de la señal en lenguaje simple")
-    valor:       float = Field(description="Valor actual del indicador")
-    umbral:      Optional[float] = Field(default=None, description="Umbral configurado")
+    ticker:      str
+    indicador:   str
+    señal:       str
+    descripcion: str
+    valor:       float
+    umbral:      Optional[float] = None
 
 
 class AlertasResponse(BaseModel):
-    """Response para GET /alertas"""
-    fecha:   str              = Field(description="Fecha de generación de alertas")
-    alertas: list[AlertaItem] = Field(description="Lista de alertas activas")
-    resumen: dict[str, int]   = Field(description="Resumen: cuántas COMPRA/VENTA/NEUTRAL")
+    fecha:   str
+    alertas: list[AlertaItem]
+    resumen: dict[str, int]
 
 
 class MacroIndicador(BaseModel):
-    """Un indicador macroeconómico."""
-    nombre:  str   = Field(description="Nombre del indicador")
-    valor:   float = Field(description="Valor actual")
-    display: str   = Field(description="Valor formateado para mostrar")
-    fuente:  str   = Field(description="Fuente del dato")
-    fecha:   str   = Field(description="Fecha de actualización")
-    unidad:  str   = Field(description="Unidad de medida")
+    nombre:  str
+    valor:   float
+    display: str
+    fuente:  str
+    fecha:   str
+    unidad:  str
 
 
 class MacroResponse(BaseModel):
-    """Response para GET /macro"""
-    tasa_libre_riesgo: MacroIndicador = Field(description="T-Bill 3M (^IRX)")
-    benchmark_retorno: MacroIndicador = Field(description="Retorno anualizado S&P 500")
-    benchmark_vol:     MacroIndicador = Field(description="Volatilidad anualizada S&P 500")
+    tasa_libre_riesgo: MacroIndicador
+    benchmark_retorno: MacroIndicador
+    benchmark_vol:     MacroIndicador
 
 
-# ── Error model ──────────────────────────────────────────────
+# ── Nuevos response models ─────────────────────────────────
+
+class SP500TickerInfo(BaseModel):
+    ticker: str
+    name:   str
+    sector: str
+
+
+class SP500ListResponse(BaseModel):
+    total:   int
+    tickers: list[SP500TickerInfo]
+
+
+class MonteCarloResponse(BaseModel):
+    tickers:          list[str]
+    weights:          list[float]
+    horizon_days:     int
+    n_simulations:    int
+    trayectorias:     list[list[float]]   # [sim_i][dia_j] — valores del portafolio
+    fechas_sim:       list[str]
+    percentil_5:      list[float]
+    percentil_50:     list[float]
+    percentil_95:     list[float]
+    prob_perdida:     float
+    retorno_esperado: float
+    var_horizonte:    float
+
+
+class DueloMetricas(BaseModel):
+    nombre:        str
+    tickers:       list[str]
+    weights:       list[float]
+    retorno_anual: float
+    volatilidad:   float
+    sharpe:        float
+    max_drawdown:  float
+    var_95:        float
+    beta:          float
+    alpha:         float
+    ganador_metricas: dict[str, str]   # métrica → "A" | "B" | "empate"
+
+
+class DueloResponse(BaseModel):
+    portafolio_a:  DueloMetricas
+    portafolio_b:  DueloMetricas
+    veredicto:     str   # "A" | "B" | "empate"
+    puntos_a:      int
+    puntos_b:      int
+    resumen:       str
+
+
+class MaquinaTiempoResponse(BaseModel):
+    tickers:        list[str]
+    start_date:     str
+    end_date:       str
+    n_dias:         int
+    retornos_norm:  dict[str, list[float]]   # ticker → valores normalizados base 100
+    fechas:         list[str]
+    estadisticas:   dict[str, dict]          # ticker → stats del período
+    benchmark_norm: list[float]
+    mejor_activo:   str
+    peor_activo:    str
+
+
 class ErrorResponse(BaseModel):
-    """Response de error estándar."""
-    error:   str = Field(description="Tipo de error")
-    detalle: str = Field(description="Descripción detallada del error")
-    codigo:  int = Field(description="Código HTTP")
+    error:   str
+    detalle: str
+    codigo:  int

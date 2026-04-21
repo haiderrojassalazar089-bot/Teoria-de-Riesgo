@@ -12,8 +12,9 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.client import get_rendimientos, post_frontera, get_macro, TICKERS, TICKER_COLORS, SECTOR_MAP
+from data.client import get_rendimientos, post_frontera, get_macro, SECTOR_MAP
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -74,7 +75,6 @@ def min_variance_portfolio(mu_daily, cov_daily, rf_daily):
 
 
 def efficient_frontier(mu_daily, cov_daily, rf_daily, n_points=80):
-    """Calcula la frontera eficiente variando el retorno objetivo."""
     n = len(mu_daily)
     min_ret = np.dot(np.ones(n) / n, mu_daily) * 252 * 0.5
     max_ret = mu_daily.max() * 252 * 1.05
@@ -99,7 +99,7 @@ def efficient_frontier(mu_daily, cov_daily, rf_daily, n_points=80):
 
 # ── Gráficos ──────────────────────────────────────────────────
 
-def fig_heatmap_corr(returns_df):
+def fig_heatmap_corr(returns_df, TICKERS):
     corr = returns_df[TICKERS].corr()
     fig  = go.Figure(go.Heatmap(
         z=corr.values,
@@ -132,12 +132,12 @@ def fig_frontera(sim_rets, sim_vols, sim_sharpes,
                  ef_vols, ef_rets,
                  w_mv, w_ms, mu_daily, cov_daily, rf_daily,
                  tickers):
+    TICKER_COLORS = get_ticker_colors()
     ret_mv, vol_mv, shr_mv = portfolio_metrics(w_mv, mu_daily, cov_daily, rf_daily)
     ret_ms, vol_ms, shr_ms = portfolio_metrics(w_ms, mu_daily, cov_daily, rf_daily)
 
     fig = go.Figure()
 
-    # Nube de portafolios
     fig.add_trace(go.Scatter(
         x=sim_vols, y=sim_rets, mode="markers",
         marker=dict(
@@ -153,7 +153,6 @@ def fig_frontera(sim_rets, sim_vols, sim_sharpes,
         hovertemplate="Vol: %{x:.2%}<br>Ret: %{y:.2%}<extra></extra>",
     ))
 
-    # Frontera eficiente
     if len(ef_vols) > 0:
         fig.add_trace(go.Scatter(
             x=ef_vols, y=ef_rets, mode="lines",
@@ -161,7 +160,6 @@ def fig_frontera(sim_rets, sim_vols, sim_sharpes,
             line=dict(color=COLORS["gold"], width=2.5),
         ))
 
-    # Portafolio mínima varianza
     fig.add_trace(go.Scatter(
         x=[vol_mv], y=[ret_mv], mode="markers+text",
         name=f"Mín. Varianza (Sharpe={shr_mv:.2f})",
@@ -174,7 +172,6 @@ def fig_frontera(sim_rets, sim_vols, sim_sharpes,
                        f"Sharpe: {shr_mv:.3f}<extra></extra>"),
     ))
 
-    # Portafolio máximo Sharpe
     fig.add_trace(go.Scatter(
         x=[vol_ms], y=[ret_ms], mode="markers+text",
         name=f"Máx. Sharpe ({shr_ms:.2f})",
@@ -187,7 +184,6 @@ def fig_frontera(sim_rets, sim_vols, sim_sharpes,
                        f"Sharpe: {shr_ms:.3f}<extra></extra>"),
     ))
 
-    # Activos individuales
     for t in tickers:
         idx  = tickers.index(t)
         r_t  = mu_daily[idx] * 252
@@ -217,6 +213,7 @@ def fig_frontera(sim_rets, sim_vols, sim_sharpes,
 
 
 def fig_composicion(w_mv, w_ms, tickers):
+    TICKER_COLORS = get_ticker_colors()
     colors = [TICKER_COLORS.get(t, COLORS["gold"]) for t in tickers]
     fig = make_subplots(rows=1, cols=2,
                         subplot_titles=["Mínima Varianza", "Máximo Sharpe"],
@@ -249,6 +246,10 @@ def fig_composicion(w_mv, w_ms, tickers):
 # ── Layout ────────────────────────────────────────────────────
 
 def show():
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
         <div style="display:flex;align-items:baseline;gap:0.8rem;margin-bottom:6px;">
@@ -285,7 +286,6 @@ def show():
     cov_daily = log_ret[TICKERS].cov().values
     rf_daily  = rf["daily"]
 
-    # Controles
     c1, c2 = st.columns([1, 2])
     with c1:
         n_sim = st.selectbox("Portafolios a simular", [10_000, 30_000, 50_000], index=0,
@@ -299,9 +299,8 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Matriz de correlación ──
     sec_title("① Matriz de Correlación entre Activos")
-    st.plotly_chart(fig_heatmap_corr(log_ret), use_container_width=True)
+    st.plotly_chart(fig_heatmap_corr(log_ret, TICKERS), use_container_width=True)
 
     with st.expander("Interpretación — Correlaciones y diversificación"):
         st.markdown("""
@@ -316,7 +315,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Simulación y optimización ──
     sec_title("② Conjunto Factible y Frontera Eficiente", COLORS["sky"])
 
     with st.spinner(f"Simulando {n_sim:,} portafolios y calculando frontera eficiente..."):
@@ -335,7 +333,7 @@ def show():
     with st.expander("Interpretación — Frontera eficiente y conjunto factible"):
         st.markdown("""
         El **conjunto factible** (nube de puntos) representa todos los portafolios posibles
-        con los 5 activos bajo pesos no negativos que suman 100%.
+        con los activos seleccionados bajo pesos no negativos que suman 100%.
 
         La **frontera eficiente** es el subconjunto de portafolios que maximiza el retorno
         esperado para cada nivel de riesgo. Ningún portafolio racional debería ubicarse
@@ -351,7 +349,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── KPIs portafolios óptimos ──
     sec_title("③ Métricas de Portafolios Óptimos", COLORS["gold"])
 
     ret_mv, vol_mv, shr_mv = portfolio_metrics(w_mv, mu_daily, cov_daily, rf_daily)
@@ -388,7 +385,6 @@ def show():
 
     st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
 
-    # ── Composición ──
     sec_title("④ Composición de Portafolios Óptimos", COLORS["emerald"])
     col_pie, col_tbl = st.columns([3, 2])
 
@@ -400,7 +396,7 @@ def show():
         for i, t in enumerate(TICKERS):
             rows_comp.append({
                 "Ticker"  : t,
-                "Sector"  : SECTOR_MAP[t],
+                "Sector"  : SECTOR_MAP.get(t, "—"),
                 "Mín. Var.": f"{w_mv[i]*100:.2f}%",
                 "Máx. Sharpe": f"{w_ms[i]*100:.2f}%",
             })
@@ -408,7 +404,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Portafolio personalizado por rendimiento objetivo ──
     sec_title("⑤ Portafolio Eficiente con Rendimiento Objetivo", COLORS["violet"])
     ret_obj = ret_obj_pct / 100
 
@@ -431,7 +426,7 @@ def show():
         o2.metric("Volatilidad Mínima", f"{vol_o:.2%}")
         o3.metric("Ratio de Sharpe", f"{shr_o:.3f}")
 
-        rows_obj = [{"Ticker": TICKERS[i], "Sector": SECTOR_MAP[TICKERS[i]],
+        rows_obj = [{"Ticker": TICKERS[i], "Sector": SECTOR_MAP.get(TICKERS[i], "—"),
                      "Peso": f"{w_obj[i]*100:.2f}%"} for i in range(n)]
         st.dataframe(pd.DataFrame(rows_obj), use_container_width=True, hide_index=True)
     else:

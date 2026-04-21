@@ -12,8 +12,9 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.client import get_alertas, get_indicadores, TICKERS, TICKER_COLORS, SECTOR_MAP
+from data.client import get_alertas, get_indicadores, SECTOR_MAP
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
 
 # ── Indicadores ───────────────────────────────────────────────
@@ -120,13 +121,8 @@ def score_label(labels):
     return "NEUTRAL", COLORS["text3"]
 
 
-# ── Renderizado de tarjeta — HTML construido como string seguro ──
-
 def build_card_html(ticker, df, senales_list, sec_labels):
-    """
-    Construye el HTML completo de la tarjeta como un string,
-    evitando f-strings anidados dentro de st.markdown().
-    """
+    TICKER_COLORS = get_ticker_colors()
     col_borde  = TICKER_COLORS.get(ticker, COLORS["gold"])
     sig_labels = [s[0] for s in senales_list]
     resumen, res_color = score_label(sig_labels)
@@ -136,7 +132,6 @@ def build_card_html(ticker, df, senales_list, sec_labels):
     cambio_color = "#1A6B4A" if cambio >= 0 else "#8B2A2A"
     cambio_prefix = "+" if cambio >= 0 else ""
 
-    # --- Construir filas de señales como string ---
     filas = ""
     for ind_label, sig in zip(sec_labels, senales_list):
         sig_label = sig[0]
@@ -155,13 +150,10 @@ def build_card_html(ticker, df, senales_list, sec_labels):
             "</div>"
         )
 
-    # --- Ensamblar tarjeta completa ---
     html = (
         "<div style='background:#FFFFFF;border:1px solid #D8DDE8;"
         "border-top:3px solid " + col_borde + ";"
         "border-radius:8px;padding:1rem;margin-bottom:0.25rem;'>"
-
-        # Header: ticker + precio + cambio
         "<div style='display:flex;justify-content:space-between;"
         "align-items:flex-start;margin-bottom:8px;'>"
         "<div>"
@@ -170,15 +162,13 @@ def build_card_html(ticker, df, senales_list, sec_labels):
         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
         "color:#4A5568;margin-top:1px;'>$" + f"{ultimo:.2f}" + "</div>"
         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.5rem;"
-        "color:#8896A8;margin-top:1px;'>" + SECTOR_MAP[ticker] + "</div>"
+        "color:#8896A8;margin-top:1px;'>" + SECTOR_MAP.get(ticker, "—") + "</div>"
         "</div>"
         "<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
         "font-weight:600;color:" + cambio_color + ";'>"
         + cambio_prefix + f"{cambio:.2f}%" +
         "</div>"
         "</div>"
-
-        # Badge resumen consolidado
         "<div style='background:" + res_color + "1A;"
         "border:1px solid " + res_color + "55;"
         "border-radius:5px;padding:4px 8px;"
@@ -189,10 +179,7 @@ def build_card_html(ticker, df, senales_list, sec_labels):
         + resumen +
         "</span>"
         "</div>"
-
-        # Filas de señales
         + filas +
-
         "</div>"
     )
     return html
@@ -201,6 +188,7 @@ def build_card_html(ticker, df, senales_list, sec_labels):
 # ── Gráfico multi-panel ───────────────────────────────────────
 
 def fig_precio_senales(df, ticker, s1, s2, rsi_w, bb_w, bb_k):
+    TICKER_COLORS = get_ticker_colors()
     c   = df["Close"]
     col = TICKER_COLORS.get(ticker, COLORS["gold"])
     u, m_bb, l_bb = bollinger(c, bb_w, bb_k)
@@ -215,7 +203,6 @@ def fig_precio_senales(df, ticker, s1, s2, rsi_w, bb_w, bb_k):
         vertical_spacing=0.03,
     )
 
-    # Panel 1 — Precio + medias + BB
     fig.add_trace(go.Scatter(x=c.index, y=c.values, name=ticker,
         line=dict(color=col, width=1.8)), row=1, col=1)
     fig.add_trace(go.Scatter(x=c.index, y=ma_s1.values, name=f"SMA {s1}",
@@ -228,13 +215,11 @@ def fig_precio_senales(df, ticker, s1, s2, rsi_w, bb_w, bb_k):
         line=dict(color=COLORS["gold"], width=0.8, dash="dot"), opacity=0.5,
         fill="tonexty", fillcolor="rgba(168,144,96,0.04)"), row=1, col=1)
 
-    # Panel 2 — RSI
     fig.add_hline(y=70, line=dict(color=COLORS["rose"],    width=0.8, dash="dash"), row=2, col=1)
     fig.add_hline(y=30, line=dict(color=COLORS["emerald"], width=0.8, dash="dash"), row=2, col=1)
     fig.add_trace(go.Scatter(x=r.index, y=r.values, name=f"RSI({rsi_w})",
         line=dict(color=COLORS["gold"], width=1.3)), row=2, col=1)
 
-    # Panel 3 — MACD
     colors_hist = [COLORS["emerald"] if v >= 0 else COLORS["rose"]
                    for v in hist_macd.fillna(0)]
     fig.add_trace(go.Bar(x=ml.index, y=hist_macd.values, name="Histograma",
@@ -270,7 +255,10 @@ def sec_title(text, color=None):
 
 
 def show():
-    # ── Header ──
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
         <div style="display:flex;align-items:baseline;gap:0.8rem;margin-bottom:6px;">
@@ -290,7 +278,6 @@ def show():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Controles — siempre definidos primero con valores por defecto ──
     rsi_w      = 14
     sob_compra = 70
     sob_venta  = 30
@@ -318,7 +305,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Carga de datos ──
     with st.spinner("Cargando datos de todos los activos..."):
         data_all = {}
         for t in TICKERS:
@@ -333,7 +319,6 @@ def show():
 
     sec_labels = ["MACD", "RSI", "Bollinger", "Golden Cross", "Estocástico"]
 
-    # ── Panel de semáforos ──
     sec_title("① Panel de alertas — Semáforo por activo")
 
     cols_grid = st.columns(len(TICKERS))
@@ -360,7 +345,6 @@ def show():
 
     st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
 
-    # ── Detalle por activo ──
     sec_title("② Análisis detallado por activo", COLORS["sky"])
 
     ticker_det = st.selectbox("Activo", TICKERS)
@@ -376,7 +360,6 @@ def show():
 
         senales_det = [sd_macd, sd_rsi, sd_bb, sd_gc, sd_stoch]
 
-        # Filas de detalle
         for j, (label, desc) in enumerate(senales_det):
             fg, bg = BADGE.get(label, ("#8896A8", "#F4F6FB"))
 
@@ -386,8 +369,6 @@ def show():
                 "border-radius:6px;padding:0.65rem 1rem;"
                 "margin-bottom:0.4rem;display:flex;"
                 "align-items:center;gap:1rem;flex-wrap:wrap;'>"
-
-                # Indicador + badge
                 "<div style='min-width:130px;'>"
                 "<div style='font-family:IBM Plex Mono,monospace;font-size:0.55rem;"
                 "color:#8896A8;text-transform:uppercase;letter-spacing:0.1em;"
@@ -397,8 +378,6 @@ def show():
                 "padding:2px 9px;font-family:IBM Plex Mono,monospace;"
                 "font-size:0.60rem;font-weight:700;'>" + label + "</span>"
                 "</div>"
-
-                # Descripción
                 "<div style='font-family:Inter,sans-serif;font-size:0.78rem;"
                 "color:#4A5568;flex:1;'>" + desc + "</div>"
                 "</div>"

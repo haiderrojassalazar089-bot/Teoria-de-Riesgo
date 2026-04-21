@@ -15,9 +15,11 @@ import requests
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.client import (get_rendimientos, get_precios, get_macro, get_capm,
-                          TICKERS, TICKER_COLORS, SECTOR_MAP)
-BENCHMARK = "^GSPC" 
+                          SECTOR_MAP)
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
+
+BENCHMARK = "^GSPC"
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -36,23 +38,15 @@ def sec_title(text, color=None):
 # ── Indicadores macro ─────────────────────────────────────────
 
 def get_macro_indicators(rf):
-    """
-    Obtiene indicadores macroeconómicos via yfinance.
-    Tasa libre de riesgo: ^IRX (ya disponible).
-    Inflación: usa proxy TIPS (^TYX spread).
-    Tipo de cambio: DX-Y.NYB (USD Index), EURUSD=X, USDCOP=X.
-    """
     import yfinance as yf
 
     indicators = {}
 
-    # Tasa libre de riesgo
     indicators["Tasa Libre de Riesgo (T-Bill 3M)"] = {
         "valor": rf["display"], "fuente": "Yahoo Finance · ^IRX",
         "color": COLORS["gold"], "descripcion": "Rendimiento anualizado T-Bill 3 meses"
     }
 
-    # Rendimiento del Tesoro 10 años (proxy expectativas inflación)
     try:
         tyx = yf.download("^TNX", period="5d", progress=False,
                            auto_adjust=True, multi_level_index=False)
@@ -62,7 +56,6 @@ def get_macro_indicators(rf):
             "valor": f"{tyx10:.2f}%", "fuente": "Yahoo Finance · ^TNX",
             "color": COLORS["sky"], "descripcion": "Proxy de expectativas de inflación a largo plazo"
         }
-        # Spread (10Y - 3M) como proxy de pendiente de la curva
         spread = tyx10 - rf["annual"] * 100
         indicators["Spread 10Y−3M (Curva)"] = {
             "valor": f"{spread:+.2f}%",
@@ -73,7 +66,6 @@ def get_macro_indicators(rf):
     except Exception:
         pass
 
-    # Tipo de cambio USD/COP
     try:
         cop = yf.download("USDCOP=X", period="5d", progress=False,
                            auto_adjust=True, multi_level_index=False)
@@ -89,7 +81,6 @@ def get_macro_indicators(rf):
             "color": COLORS["text3"], "descripcion": "Tipo de cambio peso colombiano"
         }
 
-    # Volatilidad implícita (VIX)
     try:
         vix = yf.download("^VIX", period="5d", progress=False,
                            auto_adjust=True, multi_level_index=False)
@@ -105,7 +96,6 @@ def get_macro_indicators(rf):
     except Exception:
         pass
 
-    # EUR/USD
     try:
         eur = yf.download("EURUSD=X", period="5d", progress=False,
                            auto_adjust=True, multi_level_index=False)
@@ -125,8 +115,7 @@ def get_macro_indicators(rf):
 
 # ── Métricas de desempeño ─────────────────────────────────────
 
-def compute_performance(port_ret, bench_ret, rf_daily):
-    """Alpha de Jensen, Tracking Error, Information Ratio y más."""
+def compute_performance(port_ret, bench_ret, rf_daily, TICKERS):
     df = pd.concat([port_ret, bench_ret], axis=1).dropna()
     df.columns = ["port", "bench"]
 
@@ -137,7 +126,7 @@ def compute_performance(port_ret, bench_ret, rf_daily):
     slope, intercept, r, p, se = stats.linregress(excess_bench, excess_port)
 
     beta_jensen   = slope
-    alpha_jensen  = intercept * 252          # anualizado
+    alpha_jensen  = intercept * 252
     alpha_p_valor = p
 
     ann_ret_port  = df["port"].mean()  * 252
@@ -174,8 +163,7 @@ def compute_performance(port_ret, bench_ret, rf_daily):
     }
 
 
-def compute_optimal_weights(log_ret, rf_daily):
-    """Calcula pesos del portafolio de máximo Sharpe (simplificado)."""
+def compute_optimal_weights(log_ret, rf_daily, TICKERS):
     from scipy.optimize import minimize
     mu  = log_ret[TICKERS].mean().values
     cov = log_ret[TICKERS].cov().values
@@ -194,7 +182,7 @@ def compute_optimal_weights(log_ret, rf_daily):
 
 # ── Gráficos ──────────────────────────────────────────────────
 
-def fig_acumulado(prices_df, w_port, bench_col, port_label):
+def fig_acumulado(prices_df, w_port, bench_col, port_label, TICKERS):
     port_norm  = (prices_df[TICKERS] * w_port).sum(axis=1)
     port_norm  = port_norm / port_norm.iloc[0] * 100
     bench_norm = prices_df[bench_col] / prices_df[bench_col].iloc[0] * 100
@@ -254,6 +242,10 @@ def fig_rolling_alpha(df_ret, rf_daily, window=60):
 # ── Layout ────────────────────────────────────────────────────
 
 def show():
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
         <div style="display:flex;align-items:baseline;gap:0.8rem;margin-bottom:6px;">
@@ -290,7 +282,6 @@ def show():
               "display": macro_d["tasa_libre_riesgo"]["display"],
               "source": macro_d["tasa_libre_riesgo"]["fuente"]}
 
-    # Opciones de portafolio
     c1, c2 = st.columns([2, 1])
     with c1:
         tipo_port = st.radio(
@@ -302,19 +293,17 @@ def show():
         ventana_alpha = st.slider("Ventana alpha rodante (días)", 20, 120, 60)
 
     if "Máximo" in tipo_port:
-        w_port = compute_optimal_weights(log_ret, rf["daily"])
+        w_port = compute_optimal_weights(log_ret, rf["daily"], TICKERS)
         port_label = "Portafolio Máx. Sharpe"
     else:
         w_port = np.ones(len(TICKERS)) / len(TICKERS)
         port_label = "Portafolio Equi-ponderado"
 
-    # Rendimientos del portafolio seleccionado
     port_ret  = (log_ret[TICKERS] * w_port).sum(axis=1)
     bench_ret = log_ret[BENCHMARK]
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Panel macroeconómico ──
     sec_title("① Panel de Indicadores Macroeconómicos")
 
     with st.spinner("Obteniendo indicadores macro..."):
@@ -342,15 +331,13 @@ def show():
 
     st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
 
-    # ── Rendimiento acumulado ──
     sec_title("② Rendimiento Acumulado — Portafolio vs S&P 500 (Base 100)", COLORS["sky"])
-    st.plotly_chart(fig_acumulado(prices_df, w_port, BENCHMARK, port_label),
+    st.plotly_chart(fig_acumulado(prices_df, w_port, BENCHMARK, port_label, TICKERS),
                     use_container_width=True)
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Métricas de desempeño ──
-    perf = compute_performance(port_ret, bench_ret, rf["daily"])
+    perf = compute_performance(port_ret, bench_ret, rf["daily"], TICKERS)
 
     sec_title("③ Métricas de Desempeño vs Benchmark", COLORS["gold"])
 
@@ -368,7 +355,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Tabla de desempeño ──
     sec_title("④ Tabla Comparativa de Desempeño", COLORS["emerald"])
 
     filas_tabla = [
@@ -388,7 +374,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Retorno activo y alpha rodante ──
     col_l, col_r = st.columns(2)
     with col_l:
         sec_title("⑤ Retorno Activo Diario", COLORS["rose"])
@@ -398,7 +383,6 @@ def show():
         st.plotly_chart(fig_rolling_alpha(perf["df"], rf["daily"], ventana_alpha),
                         use_container_width=True)
 
-    # ── Interpretación ──
     with st.expander("Interpretación — ¿El portafolio supera al benchmark?"):
         supera    = perf["ann_ret_port"] > perf["ann_ret_bench"]
         alpha_pos = perf["alpha_jensen"] > 0
@@ -422,28 +406,22 @@ def show():
          if perf['info_ratio'] > 0 else '⛔ IR negativo: el portafolio destruye valor frente al benchmark.'}
 
         **Tracking Error ({perf['tracking_error']:.2%}):** mide la volatilidad del retorno activo.
-        Un TE bajo indica que el portafolio se mueve casi como el índice (gestión pasiva implícita).
-        Un TE alto refleja mayor divergencia (gestión activa).
 
         **Conclusión:** {'El portafolio **añade valor** consistente sobre el benchmark.' if (supera and alpha_pos and ir_ok)
          else 'El portafolio **no demuestra** ventaja estadística sostenida sobre el S&P 500. '
               'Considera ajustar la selección de activos o pesos.'}
-
-        > Referencia: Grinold & Kahn (2000) sugieren IR > 0.5 como umbral de competencia
-        > para gestores activos. La mayoría de fondos activos no supera el índice de referencia
-        > ajustado por costos en horizontes de 10+ años.
         """)
 
     with st.expander("Definición de métricas — Referencia académica"):
         st.markdown("""
         | Métrica | Fórmula | Interpretación |
         |---------|---------|----------------|
-        | **Alpha de Jensen** | αⱼ = E[Rₚ] − [Rf + β·(E[Rm]−Rf)] | Retorno no explicado por CAPM. Positivo → gestión activa agrega valor |
-        | **Tracking Error** | TE = σ(Rₚ − Rm) | Volatilidad del retorno activo. Mide divergencia vs benchmark |
-        | **Information Ratio** | IR = (E[Rₚ]−E[Rm]) / TE | Retorno activo por unidad de riesgo activo. IR > 0.5 → gestión competente |
-        | **Beta (Jensen)** | β = Cov(Rₚ,Rm) / Var(Rm) | Sensibilidad del portafolio al mercado. β>1 → agresivo |
+        | **Alpha de Jensen** | αⱼ = E[Rₚ] − [Rf + β·(E[Rm]−Rf)] | Retorno no explicado por CAPM |
+        | **Tracking Error** | TE = σ(Rₚ − Rm) | Volatilidad del retorno activo |
+        | **Information Ratio** | IR = (E[Rₚ]−E[Rm]) / TE | Retorno activo por unidad de riesgo activo |
+        | **Beta (Jensen)** | β = Cov(Rₚ,Rm) / Var(Rm) | Sensibilidad al mercado |
         | **Sharpe Ratio** | SR = (E[R]−Rf) / σ | Retorno por unidad de riesgo total |
-        | **Máximo Drawdown** | MDD = max[(Pₜ−Pₘₐₓ)/Pₘₐₓ] | Peor caída desde máximo histórico. Mide riesgo de pérdida |
+        | **Máximo Drawdown** | MDD = max[(Pₜ−Pₘₐₓ)/Pₘₐₓ] | Peor caída desde máximo histórico |
 
-        *Fuentes: Jensen (1968), Grinold & Kahn (2000), Sharpe (1966), Sortino & Price (1994)*
+        *Fuentes: Jensen (1968), Grinold & Kahn (2000), Sharpe (1966)*
         """)

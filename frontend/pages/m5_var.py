@@ -13,8 +13,9 @@ import streamlit as st
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.client import get_rendimientos, post_var, TICKERS, TICKER_COLORS
+from data.client import get_rendimientos, post_var
 from utils.theme import plotly_base, COLORS
+from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -62,10 +63,6 @@ def var_montecarlo(r, confianza=0.95, n_sim=10_000, horizonte=1):
 
 
 def kupiec_test(r, var_d, confianza):
-    """
-    Test de Kupiec (POF - Proportion of Failures).
-    H0: la tasa de violaciones observada = (1 - confianza).
-    """
     T         = len(r)
     violac    = (r < -var_d).sum()
     p_obs     = violac / T
@@ -85,6 +82,7 @@ def kupiec_test(r, var_d, confianza):
 # ── Gráficos ──────────────────────────────────────────────────
 
 def fig_distribucion(r, var_95_hist, var_99_hist, cvar_95_hist, ticker):
+    TICKER_COLORS = get_ticker_colors()
     col = TICKER_COLORS.get(ticker, COLORS["gold"])
     mu, sigma = r.mean(), r.std()
     x = np.linspace(r.min() - 0.005, r.max() + 0.005, 400)
@@ -93,14 +91,12 @@ def fig_distribucion(r, var_95_hist, var_99_hist, cvar_95_hist, ticker):
 
     fig = go.Figure()
 
-    # Área pérdidas extremas (cola izq CVaR)
     mask_cvar = x <= -cvar_95_hist
     fig.add_trace(go.Scatter(
         x=x[mask_cvar], y=pdf_scaled[mask_cvar],
         fill="tozeroy", fillcolor="rgba(139,42,42,0.18)",
         line=dict(width=0), name="CVaR 95%", hoverinfo="skip",
     ))
-    # Área VaR 95%
     mask_var95 = (x <= -var_95_hist) & (x > -cvar_95_hist)
     fig.add_trace(go.Scatter(
         x=np.append(x[mask_var95], x[mask_var95][::-1]),
@@ -109,17 +105,14 @@ def fig_distribucion(r, var_95_hist, var_99_hist, cvar_95_hist, ticker):
         line=dict(width=0), name="Zona VaR 95%", hoverinfo="skip",
     ))
 
-    # Histograma
     fig.add_trace(go.Histogram(
         x=r.values, nbinsx=60, name="Rendimientos",
         marker_color=col, opacity=0.60, marker_line_width=0,
     ))
-    # Normal
     fig.add_trace(go.Scatter(
         x=x, y=pdf_scaled, name="Normal teórica",
         line=dict(color=COLORS["text3"], width=1.4, dash="dash"),
     ))
-    # Líneas VaR
     fig.add_vline(x=-var_95_hist, line=dict(color=COLORS["rose"], width=1.8, dash="dash"),
                   annotation_text="VaR 95%",
                   annotation_font=dict(color=COLORS["rose"], size=9))
@@ -162,10 +155,10 @@ def fig_montecarlo(sims_95, var_mc, cvar_mc, confianza, ticker):
 
 
 def fig_backtesting(r, var_d, confianza, ticker):
+    TICKER_COLORS = get_ticker_colors()
     violaciones = r < -var_d
     colors_bar  = [COLORS["rose"] if v else TICKER_COLORS.get(ticker, COLORS["gold"])
                    for v in violaciones]
-    opacities   = [0.9 if v else 0.45 for v in violaciones]
 
     fig = go.Figure()
     fig.add_hline(y=-var_d, line=dict(color=COLORS["rose"], width=1.5, dash="dash"),
@@ -185,6 +178,10 @@ def fig_backtesting(r, var_d, confianza, ticker):
 # ── Layout ────────────────────────────────────────────────────
 
 def show():
+    render_portafolio_badge()
+
+    TICKERS = get_tickers()
+
     st.markdown("""
     <div style="margin-bottom:2rem;padding-bottom:1.2rem;border-bottom:1px solid #D8DDE8;">
         <div style="display:flex;align-items:baseline;gap:0.8rem;margin-bottom:6px;">
@@ -213,7 +210,6 @@ def show():
             all_log[t] = pd.Series(d["log_returns"], index=idx)
         log_ret = pd.DataFrame(all_log).dropna()
 
-    # Controles
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     with c1:
         ticker = st.selectbox("Activo", TICKERS, index=0)
@@ -231,7 +227,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Cálculos ──
     p95 = var_parametrico(r, 0.95)
     p99 = var_parametrico(r, 0.99)
     h95 = var_historico(r, 0.95)
@@ -242,7 +237,6 @@ def show():
     var_sel  = var_parametrico(r, confianza) if confianza == 0.95 else p99
     hist_sel = h95 if confianza == 0.95 else h99
 
-    # ── KPIs ──
     sec_title(f"① Resumen VaR — {ticker} · Confianza {int(confianza*100)}%")
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("VaR Paramétrico (diario)", f"{var_sel['var_d']*100:.3f}%",
@@ -258,7 +252,6 @@ def show():
 
     st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
 
-    # ── Distribución ──
     sec_title("② Distribución de Rendimientos con Líneas de VaR y CVaR", COLORS["sky"])
     st.plotly_chart(
         fig_distribucion(r, h95["var_d"], h99["var_d"], h95["cvar_d"], ticker),
@@ -278,7 +271,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Montecarlo ──
     sec_title("③ Simulación Montecarlo", COLORS["gold"])
     st.plotly_chart(fig_montecarlo(mc["sims"], mc["var_d"], mc["cvar_d"], confianza, ticker),
                     use_container_width=True)
@@ -296,7 +288,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Tabla Comparativa ──
     sec_title("④ Tabla Comparativa de Métodos VaR", COLORS["emerald"])
 
     rows_comp = []
@@ -332,7 +323,6 @@ def show():
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
-    # ── Backtesting Kupiec ──
     sec_title("⑤ Backtesting — Test de Kupiec (POF)", COLORS["rose"])
     st.plotly_chart(fig_backtesting(r, var_sel["var_d"], confianza, ticker),
                     use_container_width=True)
