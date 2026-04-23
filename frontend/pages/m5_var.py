@@ -225,7 +225,12 @@ def fig_montecarlo_comparado(sims_norm, sims_t, var_norm, var_t,
                   annotation_font=dict(color=COLORS["emerald"], size=9),
                   row=1, col=2)
 
-    pb = plotly_base(360)
+    # ── Eje X compartido: mismo rango en ambos paneles para comparación directa ──
+    # Usamos percentiles extremos de AMBAS simulaciones para no cortar colas relevantes
+    x_min = min(np.percentile(sims_norm, 0.05), np.percentile(sims_t, 0.05))
+    x_max = max(np.percentile(sims_norm, 99.95), np.percentile(sims_t, 99.95))
+
+    pb = plotly_base(380)
     fig.update_layout(**pb,
         title=dict(
             text=f"{ticker}  ·  Montecarlo: Normal vs t-Student ({int(len(sims_norm)):,} simulaciones)",
@@ -234,10 +239,18 @@ def fig_montecarlo_comparado(sims_norm, sims_t, var_norm, var_t,
         showlegend=False,
     )
     for c in [1, 2]:
-        fig.update_xaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9),
-                         type="-", row=1, col=c)
-        fig.update_yaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9),
-                         row=1, col=c)
+        fig.update_xaxes(
+            gridcolor=COLORS["border"],
+            tickfont=dict(color=COLORS["text3"], size=9),
+            type="-",
+            range=[x_min, x_max],   # mismo rango → comparación visual directa
+            row=1, col=c,
+        )
+        fig.update_yaxes(
+            gridcolor=COLORS["border"],
+            tickfont=dict(color=COLORS["text3"], size=9),
+            row=1, col=c,
+        )
     return fig
 
 
@@ -465,7 +478,33 @@ La zona roja en el histograma representa esa cola de pérdidas extremas.
     # ── Diferencia entre métodos ──
     diff_var  = (mc_t["var_d"]  - mc_norm["var_d"])  * 100
     diff_cvar = (mc_t["cvar_d"] - mc_norm["cvar_d"]) * 100
-    diff_col  = COLORS["rose"] if diff_var > 0 else COLORS["emerald"]
+
+    # El color del banner y el mensaje se basan en ν, NO en diff_var:
+    # - ν < 8  → colas muy pesadas → t-Student es claramente superior → alerta naranja/roja
+    # - ν 8-20 → colas moderadas   → t-Student preferible              → azul
+    # - ν > 20 → converge a normal → poca diferencia práctica          → gris
+    if nu_estimado < 8:
+        diff_col = COLORS["rose"]
+        msg_impacto = (
+            f"ν = {nu_estimado:.2f} indica colas MUY PESADAS. "
+            f"La Normal subestima severamente el riesgo de cola. "
+            f"El CVaR t-Student (más alto) es la estimación correcta. "
+            f"Aunque el VaR puntual sea menor, los escenarios extremos de la t-Student "
+            f"son considerablemente más severos, como muestra el gráfico de cola izquierda."
+        )
+    elif nu_estimado < 20:
+        diff_col = COLORS["sky"]
+        msg_impacto = (
+            f"ν = {nu_estimado:.2f} indica colas moderadamente pesadas. "
+            f"La t-Student sigue siendo preferible a la Normal. "
+            f"El CVaR t-Student captura mejor los escenarios extremos reales del activo."
+        )
+    else:
+        diff_col = COLORS["text3"]
+        msg_impacto = (
+            f"ν = {nu_estimado:.2f} → la distribución converge a la Normal. "
+            f"En este período, el supuesto normal es una aproximación razonable."
+        )
 
     st.markdown(
         f'<div style="background:#FFFFFF;border:1px solid #D8DDE8;'
@@ -475,10 +514,10 @@ La zona roja en el histograma representa esa cola de pérdidas extremas.
         f'Impacto de usar t-Student vs Normal &nbsp;·&nbsp; '
         f'VaR: <b style="color:{diff_col};">{diff_var:+.3f}%</b> &nbsp;|&nbsp; '
         f'CVaR: <b style="color:{diff_col};">{diff_cvar:+.3f}%</b> &nbsp;|&nbsp; '
-        f'En USD: <b style="color:{diff_col};">USD {diff_var/100*monto:+,.0f}</b>'
+        f'CVaR en USD: <b style="color:{diff_col};">USD {diff_cvar/100*monto:+,.0f}</b>'
         f'</span>'
         f'<div style="font-family:\'Inter\',sans-serif;font-size:0.77rem;color:#4A5568;margin-top:6px;">'
-        f'{"La t-Student captura colas más pesadas que la normal → VaR y CVaR mayores → estimación más conservadora y realista." if diff_var > 0 else "En este período la normal y la t-Student convergen → ν alto → colas no son significativamente más pesadas que la normal."}'
+        f'{msg_impacto}'
         f'</div></div>',
         unsafe_allow_html=True,
     )
