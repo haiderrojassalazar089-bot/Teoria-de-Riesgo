@@ -85,6 +85,9 @@ with st.sidebar:
             "M9 · Monte Carlo Visual",
             "M10 · Duelo de Portafolios",
             "M11 · Máquina del Tiempo",
+            "M12 · Renta Fija",
+            "M13 · Opciones",
+            "M14 · Stress Testing",
         ]
 
     modulo = st.radio(
@@ -170,4 +173,15 @@ elif modulo == "M10 · Duelo de Portafolios":
 
 elif modulo == "M11 · Máquina del Tiempo":
     from pages.m11_tiempo import show
+    show()
+elif modulo == "M12 · Renta Fija":
+    from pages.m12_renta_fija import show
+    show()
+
+elif modulo == "M13 · Opciones":
+    from pages.m13_opciones import show
+    show()
+
+elif modulo == "M14 · Stress Testing":
+    from pages.m14_stress import show
     show()

@@ -33,6 +33,7 @@ from .models import (
 from .dependencies import (
     get_config, get_data_service, get_technical_indicators,
     get_risk_calculator, get_portfolio_analyzer, get_alertas_service,
+    get_engine_instance,
 )
 from .services import (
     DataService, TechnicalIndicators, RiskCalculator,
@@ -42,6 +43,8 @@ from .sp500_service import get_sp500_info, get_sp500_tickers
 from .nuevos_endpoints import (
     get_sp500_list, post_montecarlo, post_duelo, post_maquina_tiempo
 )
+from .database import init_db
+from .routers import predict as predict_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,7 +57,15 @@ app = FastAPI(
     redoc_url   = "/redoc",
 )
 
+@app.on_event("startup")
+def startup_event():
+    """Inicializa la BD al arrancar la API."""
+    engine = get_engine_instance()
+    init_db(engine)
+    logger.info("✅ Base de datos inicializada")
+
 settings = get_settings()
+app.include_router(predict_router.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins     = settings.allowed_origins,

@@ -5,8 +5,10 @@ Inyección de dependencias con Depends() de FastAPI.
 
 from functools import lru_cache
 from fastapi import Depends
+from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .services import DataService, TechnicalIndicators, RiskCalculator, PortfolioAnalyzer, AlertasService
+from .database import get_engine, get_session_local, init_db
 
 
 # ── Dependencia: configuración ────────────────────────────────
@@ -53,3 +55,41 @@ def get_alertas_service(
 ) -> AlertasService:
     """Inyecta el servicio de alertas y señales."""
     return AlertasService(data_service)
+
+
+# ══════════════════════════════════════════════════════════════
+# BASE DE DATOS
+# ══════════════════════════════════════════════════════════════
+
+_engine = None
+_SessionLocal = None
+
+def get_engine_instance():
+    """Singleton del engine SQLAlchemy."""
+    global _engine
+    if _engine is None:
+        cfg = get_settings()
+        _engine = get_engine(cfg.database_url)
+    return _engine
+
+
+def get_session_local_instance():
+    """Singleton de SessionLocal."""
+    global _SessionLocal
+    if _SessionLocal is None:
+        engine = get_engine_instance()
+        _SessionLocal = get_session_local(engine)
+    return _SessionLocal
+
+
+def get_db():
+    """
+    Dependencia que inyecta una sesión de BD en cada endpoint.
+    Uso: db: Session = Depends(get_db)
+    """
+    SessionLocal = get_session_local_instance()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     alpha_vantage_key: str = Field(default="demo", description="API key de Alpha Vantage")
     fred_api_key: str      = Field(default="",     description="API key de FRED (Federal Reserve)")
 
+    # ── Base de datos ──
+    database_url: str = Field(
+        default="sqlite:///./risklab.db",
+        description="URL de conexión SQLAlchemy (SQLite por defecto)"
+    )
+
     # ── Activos del portafolio ──
     tickers: list[str] = Field(
         default=["AAPL", "JPM", "XOM", "JNJ", "AMZN"],
