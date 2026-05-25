@@ -88,6 +88,7 @@ with st.sidebar:
             "M12 · Renta Fija",
             "M13 · Opciones",
             "M14 · Stress Testing",
+            "M15 · Machine Learning",
         ]
 
     modulo = st.radio(
@@ -184,4 +185,8 @@ elif modulo == "M13 · Opciones":
 
 elif modulo == "M14 · Stress Testing":
     from pages.m14_stress import show
+    show()
+
+elif modulo == "M15 · Machine Learning":
+    from pages.m15_ml import show
     show()

@@ -1,12 +1,6 @@
-# ══════════════════════════════════════════════════════════════
-# docker-compose.yml — RiskLab USTA
-# Orquestación para desarrollo local con hot-reload
-# ══════════════════════════════════════════════════════════════
-
 version: '3.8'
 
 services:
-  # ── Backend API ─────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -18,9 +12,7 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=sqlite:///./risklab.db
     volumes:
-      # Hot-reload: montar código para desarrollo
       - ./backend/app:/app/app
-      - ./backend/risklab.db:/app/risklab.db
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/')"]
