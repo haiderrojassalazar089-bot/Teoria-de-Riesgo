@@ -1,5 +1,5 @@
 """
-pages/m3_garch.py — Módulo 3: ARCH/GARCH
+pages/m3_garch.py — Módulo 3: ARCH / GARCH / EWMA
 Streamlit + arch library | yfinance 1.2.0
 """
 
@@ -19,18 +19,19 @@ from utils.theme import plotly_base, COLORS
 from utils.dynamic_tickers import get_tickers, get_ticker_colors, render_portafolio_badge
 
 MODELS = {
-    "ARCH(1)"          : dict(vol="ARCH",  p=1, q=0, o=0),
-    "GARCH(1,1)"       : dict(vol="GARCH", p=1, q=1, o=0),
-    "GJR-GARCH(1,1,1)" : dict(vol="GARCH", p=1, q=1, o=1),
-    "EGARCH(1,1)"      : dict(vol="EGARCH",p=1, q=1, o=0),
+    "ARCH(1)"    : dict(vol="ARCH",  p=1, q=0, o=0),
+    "GARCH(1,1)" : dict(vol="GARCH", p=1, q=1, o=0),
+    "EGARCH(1,1)": dict(vol="EGARCH",p=1, q=1, o=0),
 }
 
 MODEL_COLORS = {
-    "ARCH(1)"          : COLORS["sky"],
-    "GARCH(1,1)"       : COLORS["gold"],
-    "GJR-GARCH(1,1,1)" : COLORS["emerald"],
-    "EGARCH(1,1)"      : COLORS["violet"],
+    "ARCH(1)"    : COLORS["sky"],
+    "GARCH(1,1)" : COLORS["gold"],
+    "EGARCH(1,1)": COLORS["violet"],
 }
+
+
+# ── Helpers de UI ─────────────────────────────────────────────
 
 def sec_title(text, color=None):
     col = color or COLORS["gold"]
@@ -42,6 +43,101 @@ def sec_title(text, color=None):
     </div>
     """, unsafe_allow_html=True)
 
+
+# ── EWMA ─────────────────────────────────────────────────────
+
+def ewma_volatility(returns: pd.Series, lam: float) -> pd.Series:
+    """
+    Calcula la volatilidad EWMA (RiskMetrics) de forma recursiva.
+    σ²_t = λ·σ²_{t-1} + (1-λ)·r²_{t-1}
+    Inicialización: varianza muestral de los primeros 30 días.
+    """
+    r = returns.values
+    n = len(r)
+    var = np.empty(n)
+    var[0] = np.var(r[:30]) if n >= 30 else np.var(r)
+    for t in range(1, n):
+        var[t] = lam * var[t - 1] + (1 - lam) * r[t - 1] ** 2
+    return pd.Series(np.sqrt(var), index=returns.index)
+
+
+def fig_ewma(returns_pct: pd.Series, lam1: float, lam2: float,
+             roll_w: int, ticker: str) -> go.Figure:
+    """Gráfico comparativo: EWMA (dos lambdas) vs volatilidad rodante."""
+    ewma1  = ewma_volatility(returns_pct, lam1)
+    ewma2  = ewma_volatility(returns_pct, lam2)
+    roll   = returns_pct.rolling(roll_w).std()
+
+    fig = go.Figure()
+
+    # Área de volatilidad rodante (fondo)
+    fig.add_trace(go.Scatter(
+        x=roll.index, y=roll.values,
+        name=f"Rodante {roll_w}d",
+        line=dict(color=COLORS["text3"], width=1, dash="dot"),
+        opacity=0.6,
+    ))
+    # EWMA λ₁ (RiskMetrics si λ=0.94)
+    fig.add_trace(go.Scatter(
+        x=ewma1.index, y=ewma1.values,
+        name=f"EWMA λ={lam1}",
+        line=dict(color=COLORS["gold"], width=2),
+    ))
+    # EWMA λ₂ (configurable)
+    fig.add_trace(go.Scatter(
+        x=ewma2.index, y=ewma2.values,
+        name=f"EWMA λ={lam2}",
+        line=dict(color=COLORS["sky"], width=2, dash="dash"),
+    ))
+
+    pb = plotly_base(380)
+    pb.pop("legend", None)
+    fig.update_layout(
+        **pb,
+        title=dict(
+            text=f"{ticker}  ·  EWMA vs Volatilidad Muestral Rodante",
+            font=dict(size=12, color=COLORS["text"], family="Playfair Display"),
+        ),
+        yaxis_title="σ (% diario)",
+        legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
+    )
+    fig.update_yaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9))
+    fig.update_xaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9))
+    return fig
+
+
+def fig_ewma_decay(lam_values: list) -> go.Figure:
+    """Visualiza cómo decae el peso de observaciones pasadas para distintos λ."""
+    fig = go.Figure()
+    days = np.arange(0, 60)
+    palette = [COLORS["gold"], COLORS["sky"], COLORS["rose"], COLORS["emerald"]]
+    for i, lam in enumerate(lam_values):
+        weights = (1 - lam) * (lam ** days)
+        fig.add_trace(go.Scatter(
+            x=days, y=weights,
+            name=f"λ = {lam}",
+            line=dict(color=palette[i % len(palette)], width=2),
+        ))
+    pb = plotly_base(280)
+    pb.pop("legend", None)
+    pb["xaxis"]["type"] = "-"
+    fig.update_layout(
+        **pb,
+        title=dict(
+            text="Pesos de Observaciones Pasadas — (1−λ)·λᵏ",
+            font=dict(size=12, color=COLORS["text"], family="Playfair Display"),
+        ),
+        xaxis_title="Días de rezago (k)",
+        yaxis_title="Peso relativo",
+        legend=dict(orientation="h", y=-0.22, font=dict(size=10)),
+    )
+    fig.update_yaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9))
+    fig.update_xaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9))
+    return fig
+
+
+# ── ARCH/GARCH helpers (sin cambios) ─────────────────────────
+
 def fit_model(returns_pct, vol, p, q, o, dist):
     try:
         am  = arch_model(returns_pct, vol=vol, p=p, q=q, o=o,
@@ -50,6 +146,7 @@ def fit_model(returns_pct, vol, p, q, o, dist):
         return res
     except Exception:
         return None
+
 
 def fig_returns_vol(returns_pct, res, ticker):
     cond_vol = res.conditional_volatility
@@ -70,6 +167,7 @@ def fig_returns_vol(returns_pct, res, ticker):
     fig.update_yaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9))
     fig.update_xaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9))
     return fig
+
 
 def fig_residuals(res):
     std_r = res.std_resid.dropna()
@@ -98,11 +196,21 @@ def fig_residuals(res):
         fig.update_yaxes(gridcolor=COLORS["border"], tickfont=dict(color=COLORS["text3"], size=9), row=1, col=c)
     return fig
 
-def fig_forecast(res, horizon, ticker):
-    fc      = res.forecast(horizon=horizon, reindex=False)
-    fc_vol  = np.sqrt(fc.variance.iloc[-1].values)
-    days    = np.arange(1, horizon + 1)
-    hist_vol = float(res.conditional_volatility.mean())
+
+def fig_forecast(res, horizon, ticker) -> go.Figure:
+    # EGARCH no soporta método analítico para horizon > 1 → usar simulación
+    method = "simulation" if horizon > 1 and hasattr(res.model, "volatility") \
+                and res.model.volatility.__class__.__name__ == "EGARCH" \
+                else "analytic"
+    try: 
+        fc = res.forecast(horizon=horizon, reindex=False, method=method)
+    except ValueError:
+        # Fallback: si aún falla, forzar simulación
+        fc = res.forecast(horizon=horizon, reindex=False, method="simulation", simulations=1000)
+
+    fc_vol   = np.sqrt(fc.variance.iloc[-1].values) 
+    days     = np.arange(1, horizon + 1)
+    hist_vol = float(res.conditional_volatility.mean())      
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -132,8 +240,7 @@ def fig_forecast(res, horizon, ticker):
 
 
 def render_model_cards(results, best_k):
-    """Renderiza una tarjeta por modelo con KPIs bien espaciados."""
-    cols = st.columns(4)
+    cols = st.columns(3)
     for i, (name, res) in enumerate(results.items()):
         color = MODEL_COLORS.get(name, COLORS["gold"])
         is_best = name == best_k
@@ -189,6 +296,10 @@ def render_model_cards(results, best_k):
                 """, unsafe_allow_html=True)
 
 
+# ══════════════════════════════════════════════
+# SHOW — entrada principal del módulo
+# ══════════════════════════════════════════════
+
 def show():
     render_portafolio_badge()
 
@@ -203,12 +314,12 @@ def show():
             </span>
             <span style="font-family:'Playfair Display',serif;font-size:1.65rem;
                          font-weight:700;color:#1A2035;letter-spacing:-0.01em;">
-                ARCH / GARCH
+                ARCH / GARCH / EWMA
             </span>
         </div>
         <div style="font-family:'IBM Plex Mono',monospace;font-size:0.63rem;
                     color:#8896A8;letter-spacing:0.08em;">
-            Volatilidad condicional · ARCH(1) · GARCH(1,1) · GJR-GARCH · EGARCH · Pronóstico
+            Volatilidad condicional · ARCH(1) · GARCH(1,1) · EGARCH · EWMA RiskMetrics · Pronóstico
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -231,158 +342,363 @@ def show():
 
     returns_pct = log_ret[ticker] * 100
 
-    # ── 1. Test ARCH-LM ──
-    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
-    sec_title("① Justificación — Prueba de Efecto ARCH (ARCH-LM)")
+    # ════════════════════════════════════════
+    # TAB layout: ARCH/GARCH  |  EWMA
+    # ════════════════════════════════════════
+    tab_garch, tab_ewma = st.tabs(["📊 ARCH / GARCH", "〰️ EWMA — Suavizamiento Exponencial"])
 
-    try:
-        lm_stat, lm_p, _, _ = het_arch(returns_pct.values, nlags=5)
-        detected = lm_p < 0.05
-        color_lm = COLORS["rose"] if detected else COLORS["emerald"]
+    # ════════════════════════════════════════
+    # TAB 1 — ARCH / GARCH (sin cambios)
+    # ════════════════════════════════════════
+    with tab_garch:
 
-        col_lm1, col_lm2, col_lm3 = st.columns([1, 1, 2])
-        with col_lm1:
-            st.markdown(f"""
-            <div style="background:#FFFFFF;border:1px solid #D8DDE8;
-            border-top:3px solid {color_lm};border-radius:8px;padding:1.1rem">
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:.52rem;
-                color:#8896A8;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.4rem">
-                Estadístico LM</div>
-                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
-                font-weight:700;color:#1A2035">{lm_stat:.4f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col_lm2:
-            st.markdown(f"""
-            <div style="background:#FFFFFF;border:1px solid #D8DDE8;
-            border-top:3px solid {color_lm};border-radius:8px;padding:1.1rem">
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:.52rem;
-                color:#8896A8;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.4rem">
-                p-valor</div>
-                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
-                font-weight:700;color:{color_lm}">{lm_p:.4f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col_lm3:
-            st.markdown(f"""
-            <div style="background:{'#FAF4F4' if detected else '#F4FAF6'};
-            border:1px solid {color_lm}44;border-left:3px solid {color_lm};
-            border-radius:8px;padding:1.1rem;height:100%">
-                <div style="font-size:.82rem;font-weight:600;color:{color_lm};margin-bottom:.3rem">
-                {'⚠️ Efecto ARCH detectado → justifica modelo GARCH' if detected else '✅ No se detecta efecto ARCH'}
+        # ── 1. Test ARCH-LM ──
+        st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+        sec_title("① Justificación — Prueba de Efecto ARCH (ARCH-LM)")
+
+        try:
+            lm_stat, lm_p, _, _ = het_arch(returns_pct.values, nlags=5)
+            detected = lm_p < 0.05
+            color_lm = COLORS["rose"] if detected else COLORS["emerald"]
+
+            col_lm1, col_lm2, col_lm3 = st.columns([1, 1, 2])
+            with col_lm1:
+                st.markdown(f"""
+                <div style="background:#FFFFFF;border:1px solid #D8DDE8;
+                border-top:3px solid {color_lm};border-radius:8px;padding:1.1rem">
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:.52rem;
+                    color:#8896A8;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.4rem">
+                    Estadístico LM</div>
+                    <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                    font-weight:700;color:#1A2035">{lm_stat:.4f}</div>
                 </div>
-                <div style="font-size:.75rem;color:#4A5568;line-height:1.5">
-                H₀: no hay heterocedasticidad condicional.
-                {'Rechazamos H₀ — la varianza no es constante.' if detected else 'No rechazamos H₀ a α=5%.'}
+                """, unsafe_allow_html=True)
+            with col_lm2:
+                st.markdown(f"""
+                <div style="background:#FFFFFF;border:1px solid #D8DDE8;
+                border-top:3px solid {color_lm};border-radius:8px;padding:1.1rem">
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:.52rem;
+                    color:#8896A8;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.4rem">
+                    p-valor</div>
+                    <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                    font-weight:700;color:{color_lm}">{lm_p:.4f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_lm3:
+                st.markdown(f"""
+                <div style="background:{'#FAF4F4' if detected else '#F4FAF6'};
+                border:1px solid {color_lm}44;border-left:3px solid {color_lm};
+                border-radius:8px;padding:1.1rem;height:100%">
+                    <div style="font-size:.82rem;font-weight:600;color:{color_lm};margin-bottom:.3rem">
+                    {'⚠️ Efecto ARCH detectado → justifica modelo GARCH' if detected else '✅ No se detecta efecto ARCH'}
+                    </div>
+                    <div style="font-size:.75rem;color:#4A5568;line-height:1.5">
+                    H₀: no hay heterocedasticidad condicional.
+                    {'Rechazamos H₀ — la varianza no es constante.' if detected else 'No rechazamos H₀ a α=5%.'}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        except Exception:
+            st.warning("No se pudo calcular la prueba ARCH-LM.")
+
+        st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
+
+        # ── 2. Comparación de modelos ──
+        sec_title("② Ajuste de Modelos — ARCH(1) · GARCH(1,1) · EGARCH(1,1)", COLORS["sky"])
+
+        with st.spinner("Ajustando modelos ARCH/GARCH..."):
+            results = {}
+            for name, cfg in MODELS.items():
+                results[name] = fit_model(returns_pct, cfg["vol"], cfg["p"],
+                                          cfg["q"], cfg["o"], dist)
+
+        valid  = {k: v for k, v in results.items() if v is not None}
+        best_k = min(valid, key=lambda k: valid[k].aic) if valid else None
+
+        render_model_cards(results, best_k)
+
+        with st.expander("Criterios de selección — AIC / BIC / Log-Likelihood"):
+            st.markdown("""
+            **AIC** (Akaike): −2·ℓ + 2k. Penaliza complejidad moderadamente.
+            **BIC** (Bayesian): −2·ℓ + k·ln(n). Penaliza más severamente.
+            **Log-Likelihood**: mayor es mejor. Mide ajuste al dato.
+
+            El **EGARCH** modela ln(σ²), garantizando varianza positiva sin restricciones
+            y captura el efecto apalancamiento de forma asimétrica.
+            """)
+
+        sel_name = st.selectbox("Modelo para diagnóstico y pronóstico",
+                                list(valid.keys()) if valid else ["—"],
+                                index=list(valid.keys()).index(best_k) if best_k in valid else 0)
+        sel_res = valid.get(sel_name)
+
+        if sel_res is None:
+            st.error("No se pudo ajustar ningún modelo.")
+        else:
+            st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+
+            # ── 3. Rendimientos y Vol Condicional ──
+            sec_title("③ Rendimientos y Volatilidad Condicional Estimada", COLORS["gold"])
+            st.plotly_chart(fig_returns_vol(returns_pct, sel_res, ticker),
+                            use_container_width=True)
+
+            # ── Parámetros ──
+            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+            sec_title("Parámetros Estimados", COLORS["violet"])
+
+            params  = sel_res.params
+            persist = sum(v for k, v in params.items()
+                          if k.startswith("alpha") or k.startswith("beta"))
+
+            param_cols = st.columns(min(len(params) + 1, 8))
+            for i, (k, v) in enumerate(params.items()):
+                if i < len(param_cols):
+                    with param_cols[i]:
+                        st.metric(k, f"{v:.6f}")
+            if len(param_cols) > len(params):
+                with param_cols[len(params)]:
+                    st.metric("Persistencia (α+β)", f"{persist:.4f}",
+                              "→ 1: memoria larga" if persist > 0.95 else "Estable")
+
+            # ── 4. Diagnóstico ──
+            st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+            sec_title("④ Diagnóstico de Residuos Estandarizados", COLORS["rose"])
+            st.plotly_chart(fig_residuals(sel_res), use_container_width=True)
+
+            std_r = sel_res.std_resid.dropna()
+            jb_s, jb_p = stats.jarque_bera(std_r.values)
+            rechaza  = jb_p < 0.05
+            color_jb = COLORS["rose"] if rechaza else COLORS["emerald"]
+
+            st.markdown(f"""
+            <div style="background:#FFFFFF;border:1px solid {color_jb}44;
+                        border-left:3px solid {color_jb};border-radius:6px;
+                        padding:0.9rem 1.2rem;margin-top:0.5rem;">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:#8896A8;">
+                    Jarque-Bera sobre residuos: &nbsp;
+                </span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+                             color:#1A2035;font-weight:500;">
+                    stat={jb_s:.2f} &nbsp; p={jb_p:.4f}
+                </span>
+                <span style="font-size:0.78rem;font-weight:600;color:{color_jb};margin-left:1rem;">
+                    {'→ Residuos no normales — considerar distribución t-Student'
+                      if rechaza else '→ Residuos aproximadamente normales'}
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.expander("Interpretación — Diagnóstico de residuos"):
+                st.markdown("""
+                Los **residuos estandarizados** εₜ/σₜ deben comportarse como ruido blanco con
+                varianza unitaria si el modelo es correcto. Si Jarque-Bera rechaza normalidad,
+                re-estima con distribución **t-Student** o **t asimétrica**.
+                """)
+
+            # ── 5. Pronóstico ──
+            st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+            sec_title(f"⑤ Pronóstico de Volatilidad — {horizon} Pasos", COLORS["emerald"])
+            st.plotly_chart(fig_forecast(sel_res, horizon, ticker),
+                            use_container_width=True)
+
+            with st.expander("Interpretación — Pronóstico de volatilidad"):
+                st.markdown("""
+                El pronóstico converge a la **volatilidad incondicional de largo plazo** a medida
+                que el horizonte aumenta. Este pronóstico alimenta el **VaR dinámico** (Módulo 5)
+                y la construcción de portafolios eficientes (Módulo 6).
+                """)
+
+    # ════════════════════════════════════════
+    # TAB 2 — EWMA
+    # ════════════════════════════════════════
+    with tab_ewma:
+
+        st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+
+        # ── Fórmula ──
+        sec_title("① Fórmula Recursiva — EWMA (RiskMetrics)")
+
+        st.markdown("""
+        <div style="background:#F4F6FB;border:1px solid #D8DDE8;border-radius:8px;
+                    padding:1.2rem 1.5rem;margin-bottom:1.2rem;">
+            <div style="font-family:'Playfair Display',serif;font-size:1.1rem;
+                        color:#1A2035;font-weight:700;margin-bottom:0.6rem;text-align:center;">
+                σ²ₜ = λ · σ²ₜ₋₁ &nbsp;+&nbsp; (1 − λ) · r²ₜ₋₁
+            </div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
+                        color:#4A5568;text-align:center;margin-top:0.4rem;line-height:2;">
+                σ²ₜ = varianza estimada hoy &nbsp;|&nbsp;
+                λ ∈ (0,1) = factor de decaimiento &nbsp;|&nbsp;
+                r²ₜ₋₁ = cuadrado del retorno de ayer
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:0.62rem;color:#4A5568;
+                    line-height:1.9;margin-bottom:1rem;">
+            La fórmula EWMA es <b style="color:#1A2035;">recursiva</b>: la varianza de hoy
+            es un promedio ponderado de la varianza de ayer y el cuadrado del retorno de ayer.
+            El parámetro λ controla cuánto peso recibe la historia reciente vs la observación más antigua.
+            Un λ = 0.94 es el estándar de <b style="color:#8B6914;">RiskMetrics (J.P. Morgan, 1994)</b>,
+            calibrado para capturar la dinámica de la volatilidad en mercados financieros diarios.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Controles λ ──
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        sec_title("② Configuración de Parámetros", COLORS["sky"])
+
+        col_l1, col_l2, col_rw = st.columns(3)
+        with col_l1:
+            lam1 = st.slider(
+                "λ₁ — RiskMetrics estándar",
+                min_value=0.80, max_value=0.99, value=0.94, step=0.01,
+                help="λ = 0.94 es el valor canónico de J.P. Morgan RiskMetrics para datos diarios."
+            )
+        with col_l2:
+            lam2 = st.slider(
+                "λ₂ — Valor alternativo (configurable)",
+                min_value=0.80, max_value=0.99, value=0.85, step=0.01,
+                help="Un λ menor da más peso a observaciones recientes — más reactivo pero más ruidoso."
+            )
+        with col_rw:
+            roll_w = st.slider(
+                "Ventana volatilidad rodante (días)",
+                min_value=10, max_value=60, value=20, step=5,
+                help="Ventana de la volatilidad muestral rodante usada como referencia."
+            )
+
+        # ── KPIs EWMA ──
+        ewma1_last = float(ewma_volatility(returns_pct, lam1).iloc[-1])
+        ewma2_last = float(ewma_volatility(returns_pct, lam2).iloc[-1])
+        roll_last  = float(returns_pct.rolling(roll_w).std().iloc[-1])
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.markdown(f"""
+            <div style="background:#FFFFFF;border:1px solid #D8DDE8;border-top:3px solid {COLORS['gold']};
+            border-radius:8px;padding:1rem;text-align:center">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.5rem;color:#8896A8;
+                letter-spacing:.15em;text-transform:uppercase;margin-bottom:4px">EWMA λ={lam1} (hoy)</div>
+                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                font-weight:700;color:#8B6914">{ewma1_last:.4f}%</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with k2:
+            st.markdown(f"""
+            <div style="background:#FFFFFF;border:1px solid #D8DDE8;border-top:3px solid {COLORS['sky']};
+            border-radius:8px;padding:1rem;text-align:center">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.5rem;color:#8896A8;
+                letter-spacing:.15em;text-transform:uppercase;margin-bottom:4px">EWMA λ={lam2} (hoy)</div>
+                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                font-weight:700;color:{COLORS['sky']}">{ewma2_last:.4f}%</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with k3:
+            st.markdown(f"""
+            <div style="background:#FFFFFF;border:1px solid #D8DDE8;border-top:3px solid #8896A8;
+            border-radius:8px;padding:1rem;text-align:center">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.5rem;color:#8896A8;
+                letter-spacing:.15em;text-transform:uppercase;margin-bottom:4px">Rodante {roll_w}d (hoy)</div>
+                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                font-weight:700;color:#4A5568">{roll_last:.4f}%</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with k4:
+            diff = ewma1_last - roll_last
+            col_diff = COLORS["rose"] if diff > 0 else COLORS["emerald"]
+            sign = "+" if diff > 0 else ""
+            st.markdown(f"""
+            <div style="background:#FFFFFF;border:1px solid #D8DDE8;border-top:3px solid {col_diff};
+            border-radius:8px;padding:1rem;text-align:center">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.5rem;color:#8896A8;
+                letter-spacing:.15em;text-transform:uppercase;margin-bottom:4px">EWMA − Rodante</div>
+                <div style="font-family:'Playfair Display',serif;font-size:1.3rem;
+                font-weight:700;color:{col_diff}">{sign}{diff:.4f}%</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Gráfico comparativo ──
+        st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+        sec_title("③ Visualización — EWMA vs Volatilidad Muestral Rodante", COLORS["gold"])
+        st.plotly_chart(fig_ewma(returns_pct, lam1, lam2, roll_w, ticker),
+                        use_container_width=True)
+
+        # ── Gráfico de decaimiento ──
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        sec_title("④ Decaimiento de Pesos — (1−λ)·λᵏ", COLORS["violet"])
+
+        st.markdown("""
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#4A5568;
+                    line-height:1.8;margin-bottom:0.8rem;">
+            El peso que el EWMA asigna a una observación de hace <i>k</i> días es
+            <b style="color:#1A2035;">(1−λ)·λᵏ</b>.
+            Con λ = 0.94, una observación de hace 30 días tiene un peso de
+            {:.4f} — casi irrelevante. Con λ = 0.85 ese decay ocurre mucho más rápido.
+        </div>
+        """.format((1 - 0.94) * (0.94 ** 30)), unsafe_allow_html=True)
+
+        st.plotly_chart(fig_ewma_decay([lam1, lam2, 0.97, 0.90]),
+                        use_container_width=True)
+
+        # ── Discusión ventajas y limitaciones ──
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+        sec_title("⑤ Ventajas y Limitaciones del EWMA", COLORS["rose"])
+
+        col_v, col_l = st.columns(2)
+        with col_v:
+            st.markdown(f"""
+            <div style="background:rgba(26,107,74,0.05);border:1px solid rgba(26,107,74,0.2);
+                        border-top:3px solid {COLORS['emerald']};border-radius:8px;padding:1.1rem;">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.55rem;font-weight:700;
+                            color:{COLORS['emerald']};letter-spacing:.1em;text-transform:uppercase;
+                            margin-bottom:.8rem;">✓ Ventajas</div>
+                <div style="font-size:.78rem;color:#1A2035;line-height:2;">
+                    <b>Parsimonia:</b> un solo parámetro λ — sin estimación por MLE.<br>
+                    <b>Sin estimación:</b> λ = 0.94 es universal para datos diarios.<br>
+                    <b>Decay constante:</b> pesos decrecen geométricamente de forma predecible.<br>
+                    <b>Recursividad:</b> σ²ₜ solo requiere σ²ₜ₋₁ y rₜ₋₁ — O(1) en memoria.<br>
+                    <b>Reactivo:</b> captura cambios rápidos de volatilidad en crisis.
                 </div>
             </div>
             """, unsafe_allow_html=True)
-    except Exception:
-        st.warning("No se pudo calcular la prueba ARCH-LM.")
 
-    st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
+        with col_l:
+            st.markdown(f"""
+            <div style="background:rgba(139,42,42,0.05);border:1px solid rgba(139,42,42,0.2);
+                        border-top:3px solid {COLORS['rose']};border-radius:8px;padding:1.1rem;">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:.55rem;font-weight:700;
+                            color:{COLORS['rose']};letter-spacing:.1em;text-transform:uppercase;
+                            margin-bottom:.8rem;">✗ Limitaciones</div>
+                <div style="font-size:.78rem;color:#1A2035;line-height:2;">
+                    <b>Sin asimetría:</b> no captura el efecto leverage — caídas y subidas
+                    del mismo tamaño tienen el mismo impacto en σ².<br>
+                    <b>Sin reversión a la media:</b> la varianza incondicional de largo plazo
+                    no está definida — el proceso no es covarianza-estacionario.<br>
+                    <b>λ fijo:</b> no se adapta al régimen del mercado — en crisis
+                    podría necesitarse un λ distinto.<br>
+                    <b>Sin pronóstico estructural:</b> no genera curva de volatilidad futura
+                    como GARCH(1,1).
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    # ── 2. Comparación de modelos ──
-    sec_title("② Ajuste de Modelos — Comparación de Especificaciones", COLORS["sky"])
+        # ── Comparación EWMA vs GARCH ──
+        st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+        with st.expander("Comparación EWMA vs GARCH(1,1) — ¿Cuándo usar cada uno?"):
+            st.markdown("""
+            | Criterio | EWMA | GARCH(1,1) |
+            |---|---|---|
+            | Parámetros | 1 (λ fijo) | 3 (ω, α, β) estimados |
+            | Estacionariedad | No garantizada | Sí si α+β < 1 |
+            | Reversión a la media | No | Sí |
+            | Captura de asimetría | No | No (requiere GJR/EGARCH) |
+            | Pronóstico multi-paso | No estructural | Sí, converge a σ² incondicional |
+            | Costo computacional | Mínimo O(1) | Optimización numérica |
+            | Uso típico | VaR diario, sistemas en tiempo real | Investigación, opciones, pricing |
 
-    with st.spinner("Ajustando modelos ARCH/GARCH..."):
-        results = {}
-        for name, cfg in MODELS.items():
-            results[name] = fit_model(returns_pct, cfg["vol"], cfg["p"],
-                                      cfg["q"], cfg["o"], dist)
-
-    valid  = {k: v for k, v in results.items() if v is not None}
-    best_k = min(valid, key=lambda k: valid[k].aic) if valid else None
-
-    render_model_cards(results, best_k)
-
-    with st.expander("Criterios de selección — AIC / BIC / Log-Likelihood"):
-        st.markdown("""
-        **AIC** (Akaike): −2·ℓ + 2k. Penaliza complejidad moderadamente.
-        **BIC** (Bayesian): −2·ℓ + k·ln(n). Penaliza más severamente.
-        **Log-Likelihood**: mayor es mejor. Mide ajuste al dato.
-
-        El **GJR-GARCH** captura el efecto apalancamiento mediante el parámetro γ.
-        El **EGARCH** modela ln(σ²), garantizando varianza positiva sin restricciones.
-        """)
-
-    sel_name = st.selectbox("Modelo para diagnóstico y pronóstico",
-                            list(valid.keys()) if valid else ["—"],
-                            index=list(valid.keys()).index(best_k) if best_k in valid else 0)
-    sel_res = valid.get(sel_name)
-
-    if sel_res is None:
-        st.error("No se pudo ajustar ningún modelo.")
-        return
-
-    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
-
-    # ── 3. Rendimientos y Volatilidad Condicional ──
-    sec_title("③ Rendimientos y Volatilidad Condicional Estimada", COLORS["gold"])
-    st.plotly_chart(fig_returns_vol(returns_pct, sel_res, ticker),
-                    use_container_width=True)
-
-    # ── Parámetros estimados ──
-    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-    sec_title("Parámetros Estimados", COLORS["violet"])
-
-    params  = sel_res.params
-    persist = sum(v for k, v in params.items()
-                  if k.startswith("alpha") or k.startswith("beta"))
-
-    param_cols = st.columns(min(len(params) + 1, 8))
-    for i, (k, v) in enumerate(params.items()):
-        if i < len(param_cols):
-            with param_cols[i]:
-                st.metric(k, f"{v:.6f}")
-    if len(param_cols) > len(params):
-        with param_cols[len(params)]:
-            st.metric("Persistencia (α+β)", f"{persist:.4f}",
-                      "→ 1: memoria larga" if persist > 0.95 else "Estable")
-
-    # ── 4. Diagnóstico de residuos ──
-    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
-    sec_title("④ Diagnóstico de Residuos Estandarizados", COLORS["rose"])
-    st.plotly_chart(fig_residuals(sel_res), use_container_width=True)
-
-    std_r = sel_res.std_resid.dropna()
-    jb_s, jb_p = stats.jarque_bera(std_r.values)
-    rechaza  = jb_p < 0.05
-    color_jb = COLORS["rose"] if rechaza else COLORS["emerald"]
-
-    st.markdown(f"""
-    <div style="background:#FFFFFF;border:1px solid {color_jb}44;
-                border-left:3px solid {color_jb};border-radius:6px;
-                padding:0.9rem 1.2rem;margin-top:0.5rem;">
-        <span style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:#8896A8;">
-            Jarque-Bera sobre residuos: &nbsp;
-        </span>
-        <span style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
-                     color:#1A2035;font-weight:500;">
-            stat={jb_s:.2f} &nbsp; p={jb_p:.4f}
-        </span>
-        <span style="font-size:0.78rem;font-weight:600;color:{color_jb};margin-left:1rem;">
-            {'→ Residuos no normales — considerar distribución t-Student'
-              if rechaza else '→ Residuos aproximadamente normales'}
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.expander("Interpretación — Diagnóstico de residuos"):
-        st.markdown("""
-        Los **residuos estandarizados** εₜ/σₜ deben comportarse como ruido blanco con
-        varianza unitaria si el modelo es correcto. Si Jarque-Bera rechaza normalidad,
-        re-estima con distribución **t-Student** o **t asimétrica**.
-        """)
-
-    # ── 5. Pronóstico ──
-    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
-    sec_title(f"⑤ Pronóstico de Volatilidad — {horizon} Pasos", COLORS["emerald"])
-    st.plotly_chart(fig_forecast(sel_res, horizon, ticker), use_container_width=True)
-
-    with st.expander("Interpretación — Pronóstico de volatilidad"):
-        st.markdown("""
-        El pronóstico converge a la **volatilidad incondicional de largo plazo** a medida
-        que el horizonte aumenta. Este pronóstico alimenta el **VaR dinámico** (Módulo 5)
-        y la construcción de portafolios eficientes (Módulo 6).
-        """)
+            **Regla práctica:** para VaR operacional diario, EWMA con λ=0.94 es suficiente
+            y robusto. Para modelar la estructura temporal de la volatilidad o calibrar
+            modelos de opciones, GARCH(1,1) o EGARCH son necesarios.
+            """)
